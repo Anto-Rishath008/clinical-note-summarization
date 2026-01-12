@@ -1,0 +1,88 @@
+# Virtual Environment
+.venv/
+venv/
+env/
+ENV/
+
+# Python Cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.so
+*.dll
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Type Checking & Linting
+.mypy_cache/
+.ruff_cache/
+.pytype/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs & Artifacts
+*.log
+logs/
+wandb/
+mlruns/
+runs/
+lightning_logs/
+artifacts/checkpoints/*.pt
+artifacts/checkpoints/*.pth
+artifacts/checkpoints/*.ckpt
+artifacts/checkpoints/*.bin
+artifacts/logs/
+
+# ML Models & Large Files
+*.pt
+*.pth
+*.ckpt
+*.bin
+*.onnx
+*.pkl
+*.h5
+*.safetensors
+
+# Data (keep only samples/instructions)
+data/raw/
+data/processed/
+data/tokenized/
+data/*.csv
+data/*.json
+data/*.txt
+!data/README.md
+!data/sample_data.json
+
+# Distribution / Packaging
+dist/
+build/
+*.egg-info/
+
+# Secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*token*
+*secret*
+credentials.json
+config_private.yaml
+
+# Temporary Scripts
+cleanup_*.ps1
+verify.ps1

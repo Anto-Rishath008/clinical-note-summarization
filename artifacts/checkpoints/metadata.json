@@ -1,0 +1,8 @@
+{
+  "config_hash": "default",
+  "epoch": 1,
+  "step": 600,
+  "created_at": "2026-01-12 13:07:33",
+  "run_name": "final_check",
+  "best_rouge_L": 0.0
+}

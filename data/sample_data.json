@@ -1,0 +1,12 @@
+[
+  {
+    "id": "sample_001",
+    "note": "Patient presents with acute onset headache and photophobia. Vital signs stable. Neurological exam unremarkable. No focal deficits noted.",
+    "summary": "Acute headache with photophobia, stable vitals, normal neuro exam."
+  },
+  {
+    "id": "sample_002",
+    "note": "78-year-old male with history of hypertension and diabetes mellitus type 2 admitted for chest pain. EKG shows ST elevation in leads II, III, aVF. Troponin elevated at 2.5.",
+    "summary": "Elderly male with HTN/DM2, inferior STEMI, elevated troponin."
+  }
+]
