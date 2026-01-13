@@ -1,16 +1,86 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
 # Virtual Environment
 .venv/
 venv/
-env/
 ENV/
+env/
 
-# Python Cache
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-*.so
-*.dll
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Data Files (PHI/Large) - CRITICAL: NO PATIENT DATA
+data/**
+!data/README.md
+!data/.gitkeep
+!data/sample_data.json
+
+# Raw Dataset Folders - NEVER COMMIT
+mimic-iv-*/
+mimic-iii-*/
+*-dataset-*/
+
+# Model Artifacts (>100MB) - NEVER COMMIT
+artifacts/**
+checkpoints/**
+logs/**
+outputs/**
+runs/**
+wandb/**
+mlruns/**
+lightning_logs/**
+
+# Model Files - NEVER COMMIT
+*.pt
+*.pth
+*.ckpt
+*.bin
+*.onnx
+*.safetensors
+*.h5
+*.pkl
+*.pickle
+
+# Data Formats (Large) - NEVER COMMIT
+*.parquet
+*.arrow
+*.feather
+*.csv
+!data/sample_data.json
+
+# Tokenizer Training Files
+*.model
+*.vocab
+!artifacts/tokenizer/README.md
+
+# Logs & Temp
+*.log
+*.tmp
+*.bak
+*.swp
+*.cache
+
+# OS
+Thumbs.db
+.DS_Store
 
 # Testing
 .pytest_cache/
@@ -22,30 +92,9 @@ htmlcov/
 .ruff_cache/
 .pytype/
 
-# Jupyter
-.ipynb_checkpoints/
-*.ipynb_checkpoints
-
-# IDE
-.vscode/
-.idea/
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Logs & Artifacts
-*.log
-logs/
-wandb/
-mlruns/
-runs/
-lightning_logs/
-artifacts/checkpoints/*.pt
-artifacts/checkpoints/*.pth
-artifacts/checkpoints/*.ckpt
-artifacts/checkpoints/*.bin
-artifacts/logs/
+# Environment
+.env
+.envrc
 
 # ML Models & Large Files
 *.pt

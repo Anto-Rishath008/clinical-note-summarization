@@ -124,7 +124,9 @@ def evaluate(checkpoint_path, tokenized_dir, split='val', beam_size=4, max_eval_
     print(f"\n{'='*60}")
     print(f"Results on {split} set ({len(predictions)} examples)")
     print(f"{'='*60}")
-    print(f"ROUGE-1: {rouge_scores['rouge1']:.4f}")\n    print(f"ROUGE-2: {rouge_scores['rouge2']:.4f}")\n    print(f"ROUGE-L: {rouge_scores['rougeL']:.4f}")
+    print(f"ROUGE-1: {rouge_scores['rouge1']:.4f}")
+    print(f"ROUGE-2: {rouge_scores['rouge2']:.4f}")
+    print(f"ROUGE-L: {rouge_scores['rougeL']:.4f}")
     print(f"{'='*60}\n")
     
     # Save predictions

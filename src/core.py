@@ -690,10 +690,7 @@ class PointerGeneratorModel(nn.Module):
             encoder_outputs, encoder_hidden = self.encoder(src_ids, src_lengths)
             encoder_mask = (src_ids != self.pad_id).float()
             
-            # Initialize for beam search
-            # We'll use a simple beam search implementation
-            from utils.beam_search import beam_search_decode
-            
+            # Beam search is defined in this file (see beam_search_decode function below)
             generated_ids, scores = beam_search_decode(
                 model=self,
                 encoder_outputs=encoder_outputs,
