@@ -310,7 +310,7 @@ class PointerGeneratorDecoder(nn.Module):
     """
     
     def __init__(self, vocab_size, emb_dim, hidden_dim, encoder_dim, 
-                 num_layers=2, dropout=0.3, pad_id=3, use_coverage=True):
+                 num_layers=2, dropout=0.3, pad_id=3, use_coverage=True, use_pointer_gen=True):
         super().__init__()
         self.vocab_size = vocab_size
         self.emb_dim = emb_dim
@@ -319,6 +319,7 @@ class PointerGeneratorDecoder(nn.Module):
         self.num_layers = num_layers
         self.pad_id = pad_id
         self.use_coverage = use_coverage
+        self.use_pointer_gen = use_pointer_gen
         
         # Embeddings (shared with encoder if needed, but we keep separate)
         self.embedding = nn.Embedding(vocab_size, emb_dim, padding_idx=pad_id)
@@ -342,8 +343,11 @@ class PointerGeneratorDecoder(nn.Module):
         # Output projection to vocabulary
         self.out_proj = nn.Linear(hidden_dim + encoder_dim + emb_dim, vocab_size)
         
-        # Pointer-generator switch
-        self.p_gen_linear = nn.Linear(encoder_dim + hidden_dim + emb_dim, 1)
+        # Pointer-generator switch (only if enabled)
+        if use_pointer_gen:
+            self.p_gen_linear = nn.Linear(encoder_dim + hidden_dim + emb_dim, 1)
+        else:
+            self.p_gen_linear = None
         
         # Dropout
         self.dropout = nn.Dropout(dropout)
@@ -405,6 +409,14 @@ class PointerGeneratorDecoder(nn.Module):
         # Concatenate: LSTM output + context + embedding
         out_input = torch.cat([lstm_output, context, embedded.squeeze(1)], dim=1)
         vocab_logits = self.out_proj(out_input)  # (batch, vocab_size)
+        
+        # If pointer-generator is disabled, just return vocab logits directly
+        if not self.use_pointer_gen:
+            # Return vocab logits directly (NOT softmax - loss expects logits!)
+            p_gen = torch.ones(batch_size, 1, device=vocab_logits.device)
+            return vocab_logits, hidden, context, attn_weights, p_gen, coverage
+        
+        # Pointer-gen enabled: compute softmax and mixing
         vocab_dist = F.softmax(vocab_logits, dim=1)
         
         # Compute pointer-generator switch
@@ -480,12 +492,14 @@ class PointerGeneratorModel(nn.Module):
         chunk_len = config['model']['chunk_len']
         num_chunks = config['model']['num_chunks']
         use_coverage = config['model']['use_coverage']
+        use_pointer_gen = config['model'].get('pointer_gen', True)  # Default to True for backwards compatibility
         
         self.config = config
         self.vocab_size = vocab_size
         self.pad_id = pad_id
         self.bos_id = config['data']['bos_id']
         self.eos_id = config['data']['eos_id']
+        self.use_pointer_gen = use_pointer_gen
         
         # Encoder
         self.encoder = ChunkedEncoder(
@@ -510,7 +524,8 @@ class PointerGeneratorModel(nn.Module):
             num_layers=num_layers,
             dropout=dropout,
             pad_id=pad_id,
-            use_coverage=use_coverage
+            use_coverage=use_coverage,
+            use_pointer_gen=use_pointer_gen
         )
         
         # Share embeddings between encoder and decoder (optional)
@@ -560,6 +575,9 @@ class PointerGeneratorModel(nn.Module):
         # Decode step by step (teacher forcing)
         for t in range(1, tgt_len):
             # Decoder step
+            # Only pass encoder_input_ids if pointer-gen is enabled
+            encoder_input_ids_arg = src_ids if self.use_pointer_gen else None
+            
             final_dist, decoder_hidden, context, attn, p_gen, coverage = self.decoder(
                 input_token=input_token,
                 last_hidden=decoder_hidden,
@@ -567,7 +585,7 @@ class PointerGeneratorModel(nn.Module):
                 encoder_mask=encoder_mask,
                 context_vec=context,
                 coverage=coverage,
-                encoder_input_ids=src_ids
+                encoder_input_ids=encoder_input_ids_arg
             )
             
             outputs.append(final_dist)
@@ -607,17 +625,17 @@ class PointerGeneratorModel(nn.Module):
         
         return (h, c)
     
-    def compute_loss(self, outputs, targets, attentions, coverages, coverage_lambda=1.0, label_smoothing=0.1):
+    def compute_loss(self, outputs, targets, attentions, coverages, coverage_lambda=1.0, label_smoothing=0.0):
         """
-        Compute loss with coverage penalty and label smoothing.
+        Compute loss with coverage penalty.
         
         Args:
-            outputs: (batch, tgt_len-1, vocab_size) - predicted distributions
+            outputs: (batch, tgt_len-1, vocab_size) - logits if pointer-gen disabled, probs if enabled
             targets: (batch, tgt_len) - target token IDs (includes BOS)
             attentions: (batch, tgt_len-1, src_len) - attention weights
             coverages: (batch, tgt_len-1, src_len) - accumulated coverage
             coverage_lambda: weight for coverage loss
-            label_smoothing: label smoothing factor (default 0.1)
+            label_smoothing: label smoothing factor (default 0.0 - disabled for stability)
             
         Returns:
             total_loss: scalar
@@ -629,19 +647,35 @@ class PointerGeneratorModel(nn.Module):
         
         batch_size, tgt_len, vocab_size = outputs.size()
         
-        # Negative log-likelihood loss
-        # Flatten for CrossEntropyLoss
-        outputs_flat = outputs.reshape(-1, vocab_size)  # (batch * tgt_len, vocab_size)
+        # Flatten targets
         targets_flat = targets.reshape(-1)  # (batch * tgt_len)
         
-        # Ignore padding in loss with label smoothing
-        nll_loss = nn.functional.cross_entropy(
-            outputs_flat,
-            targets_flat,
-            ignore_index=self.pad_id,
-            reduction='mean',
-            label_smoothing=label_smoothing
-        )
+        # Negative log-likelihood loss
+        if self.use_pointer_gen:
+            # outputs are probabilities (from pointer-gen mechanism)
+            # Convert to log probabilities safely and use NLLLoss
+            # Use clamp_min for numerical stability
+            log_probs = torch.log(outputs.clamp(min=1e-8))
+            log_probs_flat = log_probs.reshape(-1, vocab_size)
+            
+            # Use NLLLoss - NO label smoothing for pointer-gen (causes gradient issues)
+            nll_loss = nn.functional.nll_loss(
+                log_probs_flat,
+                targets_flat,
+                ignore_index=self.pad_id,
+                reduction='mean'
+            )
+        else:
+            # outputs are logits (from vocab projection)
+            # Use CrossEntropyLoss directly
+            outputs_flat = outputs.reshape(-1, vocab_size)
+            nll_loss = nn.functional.cross_entropy(
+                outputs_flat,
+                targets_flat,
+                ignore_index=self.pad_id,
+                reduction='mean',
+                label_smoothing=label_smoothing
+            )
         
         # Coverage loss: penalize re-attending to same positions
         # coverage_loss = sum_t min(a_t, c_t) where c_t is coverage up to step t
@@ -1121,6 +1155,9 @@ def beam_search_decode(model, encoder_outputs, encoder_hidden, encoder_mask, src
             coverage = beam.coverage
             
             # Decoder step
+            # Only pass encoder_input_ids if pointer-gen is enabled
+            encoder_input_ids_arg = src_ids_expanded[:1] if model.use_pointer_gen else None
+            
             final_dist, new_hidden, new_context, attn, p_gen, new_coverage = model.decoder(
                 input_token=input_token,
                 last_hidden=hidden,
@@ -1128,11 +1165,16 @@ def beam_search_decode(model, encoder_outputs, encoder_hidden, encoder_mask, src
                 encoder_mask=encoder_mask[:1],
                 context_vec=context,
                 coverage=coverage,
-                encoder_input_ids=src_ids_expanded[:1]
+                encoder_input_ids=encoder_input_ids_arg
             )
             
-            # Log probabilities
-            log_probs = torch.log(final_dist + 1e-10)  # (1, vocab_size)
+            # Convert to log probabilities
+            # CRITICAL: If pointer-gen is disabled, final_dist is LOGITS (can be negative)
+            # If pointer-gen is enabled, final_dist is PROBABILITIES (0 to 1)
+            if model.use_pointer_gen:
+                log_probs = torch.log(final_dist.clamp(min=1e-10))  # (1, vocab_size)
+            else:
+                log_probs = F.log_softmax(final_dist, dim=-1)  # (1, vocab_size)
             
             # Block short sequences from generating EOS
             if step < min_length:

@@ -1,137 +1,246 @@
-# Python
+# ============================================================================
+# Python Generated Files
+# ============================================================================
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
-*.egg-info/
-dist/
 build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
 *.egg
+MANIFEST
+*.manifest
+*.spec
 
-# Virtual Environment
+# Compiled files
+*.pyc
+*.pyo
+*.pyd
+*.class
+*.dll
+*.exe
+*.o
+*.so
+
+# ============================================================================
+# Virtual Environments (NEVER COMMIT)
+# ============================================================================
 .venv/
 venv/
 ENV/
 env/
+.virtualenv/
+.conda/
+*.virtualenv
 
-# IDE
+# ============================================================================
+# IDE & Editor Files
+# ============================================================================
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
 .DS_Store
+.project
+.pydevproject
+.settings/
+*.sublime-project
+*.sublime-workspace
 
-# Jupyter
+# ============================================================================
+# Jupyter Notebooks (Generated outputs)
+# ============================================================================
 .ipynb_checkpoints/
 *.ipynb
 
-# Data Files (PHI/Large) - CRITICAL: NO PATIENT DATA
-data/**
-!data/README.md
-!data/.gitkeep
-!data/sample_data.json
+# ============================================================================
+# Model Checkpoints & Weights (NEVER COMMIT - Too Large)
+# ============================================================================
+*.pt
+*.pth
+*.ckpt
+*.bin
+*.safetensors
+*.h5
+*.hdf5
+*.pkl
+*.pickle
+*.joblib
 
-# Raw Dataset Folders - NEVER COMMIT
-mimic-iv-*/
-mimic-iii-*/
-*-dataset-*/
-
-# Model Artifacts (>100MB) - NEVER COMMIT
+# Model artifacts directories
 artifacts/**
+!artifacts/README.md
+!artifacts/.gitkeep
+!artifacts/tokenizer/
+!artifacts/tokenizer/spm.model
+!artifacts/tokenizer/spm.vocab
 checkpoints/**
+models/**
+saved_models/**
+
+# Training output logs
+training_*.txt
+
+# ============================================================================
+# Training & Experiment Artifacts
+# ============================================================================
+# Logs
 logs/**
-outputs/**
+!logs/README.md
+!logs/.gitkeep
+*.log
+*.out
+*.err
+
+# TensorBoard & Tracking
 runs/**
 wandb/**
 mlruns/**
 lightning_logs/**
+tensorboard/**
+.wandb/
 
-# Model Files - NEVER COMMIT
-*.pt
-*.pth
-*.ckpt
-*.bin
-*.onnx
-*.safetensors
-*.h5
-*.pkl
-*.pickle
+# HuggingFace cache and runs
+hf_runs/**
+.cache/**
+.huggingface/**
 
-# Data Formats (Large) - NEVER COMMIT
+# Outputs
+outputs/**
+!outputs/README.md
+!outputs/.gitkeep
+
+# ============================================================================
+# Data Files (CRITICAL: NO PATIENT DATA OR LARGE DATASETS)
+# ============================================================================
+# Raw datasets (PHI protected)
+data/**
+!data/README.md
+!data/.gitkeep
+!data/sample_data.json
+!data/tokenized/
+!data/tokenized/train_text_5k.csv
+!data/tokenized/val_text_500.csv
+
+# Processed data caches
 *.parquet
-*.arrow
 *.feather
 *.csv
+*.tsv
+*.json
+!experiments/*.csv
+!reports/*.csv
+!sample_data.json
 !data/sample_data.json
 
-# Tokenizer Training Files
-*.model
-*.vocab
+# Dataset folders - NEVER COMMIT
+mimic-iv-*/
+mimic-iii-*/
+mimic_iv*/
+mimic_iii*/
+*-dataset-*/
+dataset/
+datasets/
+
+# Tokenizer models (keep for reproducibility)
+# *.model
+# *.vocab
+# *.spm
 !artifacts/tokenizer/README.md
 
-# Logs & Temp
-*.log
+# ============================================================================
+# Reports & Experiments (Keep small results only)
+# ============================================================================
+# Keep experiment results but not intermediate artifacts
+experiments/outputs/**
+experiments/cache/**
+
+# Predictions (can be large)
+predictions/**
+!predictions/README.md
+!predictions/.gitkeep
+
+# ============================================================================
+# OS & System Files
+# ============================================================================
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.Trash-*
+
+# ============================================================================
+# Temporary Files
+# ============================================================================
 *.tmp
+*.temp
 *.bak
 *.swp
-*.cache
+*.swo
+*~
+.#*
+\#*#
 
-# OS
-Thumbs.db
-.DS_Store
-
-# Testing
-.pytest_cache/
+# ============================================================================
+# Testing & Coverage
+# ============================================================================
+.tox/
 .coverage
-htmlcov/
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
 
+# ============================================================================
 # Type Checking & Linting
+# ============================================================================
 .mypy_cache/
 .ruff_cache/
 .pytype/
+.pylint.d/
 
-# Environment
-.env
-.envrc
-
-# ML Models & Large Files
-*.pt
-*.pth
-*.ckpt
-*.bin
-*.onnx
-*.pkl
-*.h5
-*.safetensors
-
-# Data (keep only samples/instructions)
-data/raw/
-data/processed/
-data/tokenized/
-data/*.csv
-data/*.json
-data/*.txt
-!data/README.md
-!data/sample_data.json
-
-# Distribution / Packaging
-dist/
-build/
-*.egg-info/
-
-# Secrets
+# ============================================================================
+# Environment Variables & Secrets
+# ============================================================================
 .env
 .env.*
 !.env.example
 *.pem
 *.key
-*token*
-*secret*
-credentials.json
+*_token
+*_secret
+credentials*.json
+*_credentials.json
 config_private.yaml
+secrets.yaml
 
-# Temporary Scripts
-cleanup_*.ps1
-verify.ps1
+# ============================================================================
+# Large Binary Files
+# ============================================================================
+*.parquet
+*.arrow
+*.feather
+
+# ============================================================================
+# Temporary Cleanup Scripts
+# ============================================================================
+cleanup_temp_*.ps1
+verify_temp.ps1

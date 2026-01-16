@@ -278,10 +278,13 @@ def train(config, tokenized_dir, run_name, resume_ckpt=None, max_steps_override=
                 outputs, attentions, coverages, p_gens = model(src_ids, src_lens, tgt_ids)
                 
                 # Compute loss
+                # NOTE: label_smoothing default changed to 0.0 because the manual
+                # implementation for pointer-gen was broken. Only use label smoothing
+                # when pointer_gen=False (where cross_entropy handles it correctly)
                 total_loss, nll_loss, coverage_loss = model.compute_loss(
                     outputs, tgt_ids, attentions, coverages,
                     coverage_lambda=config['model'].get('coverage_lambda', 1.0),
-                    label_smoothing=config['training'].get('label_smoothing', 0.1)
+                    label_smoothing=config['training'].get('label_smoothing', 0.0)
                 )
                 
                 # Scale loss for gradient accumulation
