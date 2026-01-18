@@ -14,12 +14,21 @@ import time
 import pandas as pd
 from tqdm import tqdm
 import sys
+import os
+
+# Force unbuffered output for real-time logging
+os.environ['PYTHONUNBUFFERED'] = '1'
 
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent / 'src'))
 
 from src.core import PointerGeneratorModel, get_dataloader, RougeMetric
 import sentencepiece as spm
+
+
+def print_flush(msg):
+    """Print with immediate flush for logging"""
+    print(msg, flush=True)
 
 
 def print_gpu_info():
@@ -31,7 +40,7 @@ def print_gpu_info():
         print(f"GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB")
         print(f"{'='*60}\n")
     else:
-        print("\n⚠️  WARNING: No GPU detected! Training will be slow.\n")
+        print("\nWARNING: No GPU detected! Training will be slow.\n")
 
 
 def load_config(config_path):
@@ -261,6 +270,17 @@ def train(config, tokenized_dir, run_name, resume_ckpt=None, max_steps_override=
     
     patience_counter = 0
     
+    # Loss tracking for stuck detection
+    initial_loss = None
+    loss_history = []
+    stuck_check_interval = 500  # Check every 500 steps
+    min_loss_reduction_pct = 5.0  # Expect at least 5% reduction
+    
+    # Expected random loss (log vocab size)
+    import math
+    expected_random_loss = math.log(config['data']['vocab_size'])
+    print(f"Expected random loss (log vocab): {expected_random_loss:.4f}")
+    
     while global_step < max_steps:
         epoch += 1
         print(f"\nEpoch {epoch}")
@@ -316,10 +336,36 @@ def train(config, tokenized_dir, run_name, resume_ckpt=None, max_steps_override=
                 epoch_loss += total_loss.item() * grad_accum_steps
                 epoch_steps += 1
                 
+                # Track loss for stuck detection
+                current_loss = total_loss.item() * grad_accum_steps
+                loss_history.append(current_loss)
+                if initial_loss is None:
+                    initial_loss = current_loss
+                
                 # Logging
                 if global_step % config['training']['log_every'] == 0:
                     avg_loss = epoch_loss / epoch_steps
-                    print(f"Step {global_step}/{max_steps} | Loss: {avg_loss:.4f} | Grad: {grad_norm:.4f} | LR: {lr:.6f}")
+                    print_flush(f"Step {global_step}/{max_steps} | Loss: {avg_loss:.4f} | Grad: {grad_norm:.4f} | LR: {lr:.6f}")
+                
+                # Loss stuck detection
+                if global_step == stuck_check_interval and initial_loss is not None:
+                    recent_avg = sum(loss_history[-50:]) / min(50, len(loss_history))
+                    loss_reduction_pct = (initial_loss - recent_avg) / initial_loss * 100
+                    
+                    print_flush(f"\n[LOSS CHECK at step {global_step}]")
+                    print_flush(f"  Initial loss: {initial_loss:.4f}")
+                    print_flush(f"  Recent avg loss: {recent_avg:.4f}")
+                    print_flush(f"  Reduction: {loss_reduction_pct:.1f}%")
+                    print_flush(f"  Expected random: {expected_random_loss:.4f}")
+                    
+                    if loss_reduction_pct < min_loss_reduction_pct:
+                        print(f"\n[WARNING] Loss not decreasing sufficiently!")
+                        print(f"  Expected at least {min_loss_reduction_pct}% reduction, got {loss_reduction_pct:.1f}%")
+                        if recent_avg > expected_random_loss * 0.95:
+                            print(f"  Loss is still near random - model may not be learning.")
+                            print(f"  Continuing training, but watch for improvement...")
+                    else:
+                        print(f"  [OK] Loss is decreasing normally.")
                 
                 # Evaluation
                 if global_step % config['training']['eval_every'] == 0:
@@ -329,7 +375,7 @@ def train(config, tokenized_dir, run_name, resume_ckpt=None, max_steps_override=
                     
                     rouge_scores = evaluate_model(model, val_loader, tokenizer, device, max_eval_batches=50)
                     
-                    print(f"ROUGE scores: R1={rouge_scores['rouge1']:.4f} R2={rouge_scores['rouge2']:.4f} RL={rouge_scores['rougeL']:.4f}")
+                    print_flush(f"ROUGE scores: R1={rouge_scores['rouge1']:.4f} R2={rouge_scores['rouge2']:.4f} RL={rouge_scores['rougeL']:.4f}")
                     
                     # Log metrics
                     metrics_log.append({
@@ -351,13 +397,13 @@ def train(config, tokenized_dir, run_name, resume_ckpt=None, max_steps_override=
                         best_rouge = rouge_scores['rougeL']
                         best_path = checkpoint_dir / 'best_model.pt'
                         save_checkpoint(model, optimizer, scaler, global_step, epoch, best_rouge, config, best_path)
-                        print(f"New best model! ROUGE-L: {best_rouge:.4f}")
+                        print_flush(f"New best model! ROUGE-L: {best_rouge:.4f}")
                         patience_counter = 0
                     else:
                         patience_counter += 1
-                        print(f"No improvement. Patience: {patience_counter}/{config['training']['patience']}")
+                        print_flush(f"No improvement. Patience: {patience_counter}/{config['training']['patience']}")
                     
-                    print(f"{'='*60}\n")
+                    print_flush(f"{'='*60}\n")
                 
                 # Save checkpoint
                 if global_step % config['training']['save_every'] == 0:
@@ -417,10 +463,10 @@ def main():
                 args.tokenized_dir = str(possible_dirs[0])
                 print(f"Auto-detected tokenized_dir: {args.tokenized_dir}")
             else:
-                print("⚠️  No tokenized_dir found. Please provide --tokenized_dir or --data_path")
+                print("[ERROR] No tokenized_dir found. Please provide --tokenized_dir or --data_path")
                 sys.exit(1)
         else:
-            print("⚠️  --tokenized_dir is required")
+            print("[ERROR] --tokenized_dir is required")
             sys.exit(1)
     
     # Train

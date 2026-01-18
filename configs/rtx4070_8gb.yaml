@@ -10,9 +10,9 @@ model:
   chunk_len: 128               # Further reduced tokens per chunk
   num_chunks: 6                # Reduced number of chunks (max input = 128 * 6 = 768)
   max_target_len: 192          # Further reduced maximum target sequence length
-  coverage_lambda: 1.0         # Coverage loss weight
+  coverage_lambda: 0.0         # Coverage loss weight (disabled initially for stability)
   pointer_gen: true            # Enable pointer-generator mechanism
-  use_coverage: true           # Enable coverage mechanism
+  use_coverage: false          # Coverage disabled initially - enable after model learns
   bidirectional: true          # Use bidirectional LSTM for encoder
 
 # Training
