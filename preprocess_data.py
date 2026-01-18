@@ -138,7 +138,7 @@ def main():
         print(f"  {fname}: {size_mb:.2f} MB")
     
     print(f"\n{'='*70}")
-    print("✓ PREPROCESSING COMPLETE!")
+    print("PREPROCESSING COMPLETE!")
     print(f"{'='*70}")
     print("\nKAGGLE UPLOAD CHECKLIST:")
     print(f"  □ {output_dir}/train.parquet")

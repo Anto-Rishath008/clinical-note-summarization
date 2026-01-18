@@ -167,9 +167,9 @@ def evaluate_checkpoint(checkpoint_path, tokenized_dir, tokenizer, config,
     print(f"  ROUGE-L: {delta_rL:+.4f}")
     
     if delta_rL > 0:
-        print(f"\n✅ Model BEATS baseline by {delta_rL:.4f} ROUGE-L!")
+        print(f"\n[PASS] Model BEATS baseline by {delta_rL:.4f} ROUGE-L!")
     else:
-        print(f"\n❌ Model is {abs(delta_rL):.4f} ROUGE-L BELOW baseline")
+        print(f"\n[FAIL] Model is {abs(delta_rL):.4f} ROUGE-L BELOW baseline")
     
     print()
     

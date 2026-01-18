@@ -195,22 +195,22 @@ def decode_sanity_check(checkpoint_path, tokenized_dir, num_examples=20):
     
     issues = []
     if np.mean(repetition_rates) > 0.3:
-        issues.append("⚠️  HIGH REPETITION: Trigram repeat rate > 0.3 indicates model is repeating phrases")
+        issues.append("[WARN] HIGH REPETITION: Trigram repeat rate > 0.3 indicates model is repeating phrases")
     if np.mean(unique_ratios) < 0.5:
-        issues.append("⚠️  LOW DIVERSITY: Unique token ratio < 0.5 indicates limited vocabulary usage")
+        issues.append("[WARN] LOW DIVERSITY: Unique token ratio < 0.5 indicates limited vocabulary usage")
     if early_eos_count / num_examples > 0.5:
-        issues.append("⚠️  EARLY EOS: >50% of generations are shorter than min_length")
+        issues.append("[WARN] EARLY EOS: >50% of generations are shorter than min_length")
     if np.mean(lengths) < 30:
-        issues.append("⚠️  TOO SHORT: Average generation is < 30 tokens")
+        issues.append("[WARN] TOO SHORT: Average generation is < 30 tokens")
     if np.mean(copy_ratios) < 0.3:
-        issues.append("⚠️  LOW COPYING: Copy ratio < 0.3 may indicate pointer mechanism not working")
+        issues.append("[WARN] LOW COPYING: Copy ratio < 0.3 may indicate pointer mechanism not working")
     
     if issues:
         print("Issues detected:")
         for issue in issues:
             print(f"  {issue}")
     else:
-        print("✓ No major issues detected")
+        print("[OK] No major issues detected")
     
     print(f"{'='*80}\n")
 
