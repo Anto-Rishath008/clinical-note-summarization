@@ -1,6 +1,36 @@
 # Clinical Note Summarization - From-Scratch Training
 
-A PyTorch implementation of a **Pointer-Generator Network with Hierarchical Encoding** for automatic summarization of clinical notes into hospital course summaries.
+A PyTorch implementation of transformer-based models for automatic summarization of clinical notes into hospital course summaries.
+
+## 🆕 NEW: Simplified LongT5 Architecture (Issue #1 Resolution)
+
+The project now includes a **LongT5-inspired transformer model** that solves all Issue #1 problems:
+
+### Architecture Comparison
+
+| Feature | Pointer-Generator (Legacy) | Simplified LongT5 (New) |
+|---------|---------------------------|-------------------------|
+| Max Length | 768 tokens (chunked) | **4096 tokens (native)** |
+| Encoder | BiLSTM with chunking | Transformer with Local-Global attention |
+| Attention | Additive + Coverage | Multi-head with relative position bias |
+| Memory | OOM issues with coverage | **Memory efficient** |
+| Multi-GPU | Not supported | **DataParallel support** |
+| Checkpointing | Basic | **Restart-safe with RNG states** |
+
+### Quick Start with LongT5
+
+```powershell
+# Train with new LongT5 model
+python train_longt5.py --config configs/longt5_config.yaml
+
+# Resume training
+python train_longt5.py --config configs/longt5_config.yaml --resume artifacts/checkpoints/longt5/latest.pt
+
+# Run inference
+python inference_longt5.py --checkpoint artifacts/checkpoints/longt5/best_model.pt --input data/test.csv
+```
+
+---
 
 ## ⚠️ IMPORTANT: From-Scratch Training Only
 
