@@ -86,15 +86,9 @@ env/
 artifacts/**
 !artifacts/README.md
 !artifacts/.gitkeep
-!artifacts/tokenizer/
-!artifacts/tokenizer/spm.model
-!artifacts/tokenizer/spm.vocab
 checkpoints/**
 models/**
 saved_models/**
-
-# Training output logs
-training_*.txt
 
 # ============================================================================
 # Training & Experiment Artifacts
@@ -133,9 +127,6 @@ data/**
 !data/README.md
 !data/.gitkeep
 !data/sample_data.json
-!data/tokenized/
-!data/tokenized/train_text_5k.csv
-!data/tokenized/val_text_500.csv
 
 # Processed data caches
 *.parquet
@@ -145,6 +136,7 @@ data/**
 *.json
 !experiments/*.csv
 !reports/*.csv
+!testing/example_outputs/*.csv
 !sample_data.json
 !data/sample_data.json
 
