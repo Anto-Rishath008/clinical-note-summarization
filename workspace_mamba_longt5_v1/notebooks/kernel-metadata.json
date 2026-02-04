@@ -1,5 +1,5 @@
 {
-  "id": "INSERT_YOUR_USERNAME/mamba-transformer-clinical-summarization",
+  "id": "antorishathrodriguez/mamba-transformer-clinical-summarization",
   "title": "Mamba-Transformer Clinical Summarization",
   "code_file": "mamba_transformer_training.ipynb",
   "language": "python",
