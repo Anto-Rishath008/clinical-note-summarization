@@ -1,0 +1,20 @@
+# Mamba-Transformer Hybrid Model Requirements
+# For clinical note summarization
+
+# Core
+torch>=2.0.0
+numpy>=1.21.0
+pyyaml>=6.0
+
+# Mamba (State Space Model)
+mamba-ssm>=1.0.0
+causal-conv1d>=1.1.0
+
+# Tokenization
+sentencepiece>=0.1.99
+
+# Evaluation
+rouge-score>=0.1.2
+
+# Utilities
+tqdm>=4.64.0

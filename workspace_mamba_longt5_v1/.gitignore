@@ -1,0 +1,31 @@
+# Data files (too large for git)
+data/*.csv
+data/*.parquet
+data/tokenized/
+
+# Checkpoints (too large for git)
+checkpoints/
+*.pt
+*.pth
+*.bin
+
+# Outputs
+outputs/
+logs/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
