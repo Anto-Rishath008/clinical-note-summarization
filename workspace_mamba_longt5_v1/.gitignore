@@ -19,7 +19,7 @@ __pycache__/
 *$py.class
 *.so
 
-# Jupyter
+# Jupyter checkpoints (but keep notebooks)
 .ipynb_checkpoints/
 
 # IDE
