@@ -12,6 +12,7 @@ checkpoints/
 # Outputs
 outputs/
 logs/
+saved_models/
 
 # Python
 __pycache__/
@@ -19,8 +20,17 @@ __pycache__/
 *$py.class
 *.so
 
-# Jupyter checkpoints (but keep notebooks)
+# Jupyter notebooks
+*.ipynb
 .ipynb_checkpoints/
+
+# Kaggle files (NEVER track these)
+kaggle.json
+**/kaggle.json
+dataset-metadata.json
+kernel-metadata.json
+**/dataset-metadata.json
+**/kernel-metadata.json
 
 # IDE
 .vscode/

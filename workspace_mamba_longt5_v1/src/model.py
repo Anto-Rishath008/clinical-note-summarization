@@ -153,6 +153,15 @@ class MemoryTokenCompressor(nn.Module):
         # Expand queries for batch
         queries = self.memory_queries.unsqueeze(0).expand(batch_size, -1, -1)
         
+        # Handle fully-masked chunks (all padding) - return just the queries
+        if chunk_mask is not None:
+            # Check if any sample has all tokens masked
+            all_masked = chunk_mask.all(dim=1)  # [batch]
+            if all_masked.any():
+                # For fully-masked chunks, just return normalized queries (no attention needed)
+                # This prevents NaN from attention over empty sequences
+                return self.norm(queries)
+        
         # Cross-attention: memory queries attend to chunk representations
         attn_out, _ = self.cross_attn(
             query=queries,

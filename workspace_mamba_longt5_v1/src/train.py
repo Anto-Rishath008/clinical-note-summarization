@@ -9,6 +9,7 @@ Full training pipeline with:
 - ROUGE evaluation
 - Checkpoint saving (atomic)
 - Best model tracking by ROUGE-L
+- Checkpoint resumption support
 """
 
 import os
@@ -19,14 +20,21 @@ import yaml
 import shutil
 import logging
 import argparse
+import glob
+import warnings
 from pathlib import Path
 from typing import Optional, Dict, Tuple
 from dataclasses import dataclass, asdict
+from tqdm import tqdm
+
+# Suppress harmless PyTorch warnings
+warnings.filterwarnings('ignore', message='.*lr_scheduler.step.*before.*optimizer.step.*')
+warnings.filterwarnings('ignore', message='.*mismatched key_padding_mask and attn_mask.*')
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.cuda.amp import GradScaler, autocast
+from torch.amp import GradScaler, autocast
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import LambdaLR
 
@@ -36,13 +44,19 @@ sys.path.insert(0, str(Path(__file__).parent))
 from model import MambaTransformerConfig, MambaTransformerModel, build_model
 from data_loader import DataConfig, create_dataloaders, load_tokenizer
 
-# Setup logging
+# Setup logging with FLUSH for live output
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s | %(levelname)s | %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
+    datefmt='%Y-%m-%d %H:%M:%S',
+    stream=sys.stdout,
 )
 logger = logging.getLogger(__name__)
+
+
+def flush_print(msg: str):
+    """Print with immediate flush for live terminal output"""
+    print(msg, flush=True)
 
 
 @dataclass
@@ -93,29 +107,37 @@ def set_seed(seed: int):
 
 def check_cuda():
     """Check CUDA availability and run test"""
-    print("=" * 60)
-    print("GPU AVAILABILITY CHECK")
-    print("=" * 60)
+    flush_print("=" * 60)
+    flush_print("GPU AVAILABILITY CHECK")
+    flush_print("=" * 60)
     
     if not torch.cuda.is_available():
-        print("ERROR: CUDA is NOT available!")
-        print("Training requires a GPU. Exiting.")
+        flush_print("ERROR: CUDA is NOT available!")
+        flush_print("Training requires a GPU. Exiting.")
         sys.exit(1)
     
-    print(f"CUDA is available: {torch.cuda.is_available()}")
-    print(f"GPU Name: {torch.cuda.get_device_name(0)}")
-    print(f"GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB")
-    print(f"CUDA Version: {torch.version.cuda}")
-    print(f"PyTorch Version: {torch.__version__}")
+    flush_print(f"CUDA is available: {torch.cuda.is_available()}")
+    flush_print(f"GPU Name: {torch.cuda.get_device_name(0)}")
+    gpu_mem_gb = torch.cuda.get_device_properties(0).total_memory / 1e9
+    flush_print(f"GPU Memory: {gpu_mem_gb:.2f} GB")
+    flush_print(f"CUDA Version: {torch.version.cuda}")
+    flush_print(f"PyTorch Version: {torch.__version__}")
     
     # Quick CUDA test
-    print("\nRunning CUDA matmul test...")
-    a = torch.randn(100, 100, device='cuda')
-    b = torch.randn(100, 100, device='cuda')
-    c = torch.matmul(a, b)
-    print(f"CUDA matmul test passed! Result shape: {c.shape}")
-    print("=" * 60)
+    flush_print("\nRunning CUDA matmul test...")
+    try:
+        a = torch.randn(100, 100, device='cuda')
+        b = torch.randn(100, 100, device='cuda')
+        c = torch.matmul(a, b)
+        flush_print(f"CUDA matmul test passed! Result shape: {c.shape}")
+        # Cleanup
+        del a, b, c
+        torch.cuda.empty_cache()
+    except Exception as e:
+        flush_print(f"CUDA TEST FAILED: {e}")
+        sys.exit(1)
     
+    flush_print("=" * 60)
     return True
 
 
@@ -207,8 +229,9 @@ def save_checkpoint_atomic(
     best_rouge_l: float,
     config: dict,
     checkpoint_path: str,
+    min_size_mb: float = 10.0,
 ):
-    """Save checkpoint atomically (write temp then rename)"""
+    """Save checkpoint atomically (write temp then rename) with verification"""
     checkpoint = {
         'step': step,
         'model_state_dict': model.state_dict(),
@@ -228,13 +251,38 @@ def save_checkpoint_atomic(
     # Verify file exists and has reasonable size
     if os.path.exists(checkpoint_path):
         size_mb = os.path.getsize(checkpoint_path) / (1024 * 1024)
-        if size_mb > 50:
-            logger.info(f"Checkpoint saved: {checkpoint_path} ({size_mb:.1f} MB)")
+        abs_path = os.path.abspath(checkpoint_path)
+        if size_mb >= min_size_mb:
+            flush_print(f"[CHECKPOINT SAVED] {abs_path}")
+            flush_print(f"  -> Size: {size_mb:.2f} MB | Step: {step} | Best ROUGE-L: {best_rouge_l:.4f}")
             return True
         else:
-            logger.warning(f"Checkpoint size too small: {size_mb:.1f} MB")
+            flush_print(f"[WARNING] Checkpoint size too small: {size_mb:.2f} MB < {min_size_mb} MB expected")
+            flush_print(f"  -> Path: {abs_path}")
             return False
-    return False
+    else:
+        flush_print(f"[ERROR] Checkpoint NOT saved: {checkpoint_path}")
+        return False
+
+
+def find_latest_checkpoint(checkpoint_dir: str) -> Optional[str]:
+    """Find the latest checkpoint in the directory by step number"""
+    if not os.path.exists(checkpoint_dir):
+        return None
+    
+    checkpoints = glob.glob(os.path.join(checkpoint_dir, 'checkpoint_step_*.pt'))
+    if not checkpoints:
+        return None
+    
+    # Sort by step number
+    def get_step(path):
+        try:
+            return int(os.path.basename(path).split('_')[-1].replace('.pt', ''))
+        except:
+            return 0
+    
+    checkpoints.sort(key=get_step, reverse=True)
+    return checkpoints[0]
 
 
 def load_checkpoint(
@@ -245,7 +293,7 @@ def load_checkpoint(
     scaler: Optional[GradScaler] = None,
 ) -> Tuple[int, float]:
     """Load checkpoint and return step and best ROUGE-L"""
-    checkpoint = torch.load(checkpoint_path, map_location='cuda')
+    checkpoint = torch.load(checkpoint_path, map_location='cuda', weights_only=False)
     
     model.load_state_dict(checkpoint['model_state_dict'])
     
@@ -288,7 +336,7 @@ def evaluate(
         tgt_mask = batch['tgt_mask'].to(device)
         
         # Compute loss
-        with autocast(enabled=True):
+        with autocast('cuda', enabled=True):
             logits = model(src, tgt_input, src_mask, tgt_mask)
             loss = criterion(logits, tgt_output)
         
@@ -321,8 +369,9 @@ def train(
     model_config: MambaTransformerConfig,
     data_config: DataConfig,
     training_config: TrainingConfig,
+    resume_from: Optional[str] = None,
 ):
-    """Main training loop"""
+    """Main training loop with checkpoint resumption support"""
     device = torch.device('cuda')
     
     # Create directories
@@ -334,18 +383,24 @@ def train(
     set_seed(training_config.seed)
     
     # Create model
-    logger.info("Building model...")
+    flush_print("Building model...")
     model = build_model(model_config)
     model = model.to(device)
     
+    # Count parameters
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    flush_print(f"Total parameters: {total_params:,}")
+    flush_print(f"Trainable parameters: {trainable_params:,}")
+    
     # Create dataloaders
-    logger.info("Creating dataloaders...")
+    flush_print("Creating dataloaders...")
     train_loader, val_loader, tokenizer = create_dataloaders(
         config=data_config,
         batch_size=training_config.batch_size,
-        num_workers=0,  # For Kaggle compatibility
+        num_workers=0,  # For local compatibility
     )
-    logger.info(f"Train batches: {len(train_loader)}, Val batches: {len(val_loader)}")
+    flush_print(f"Train batches: {len(train_loader)}, Val batches: {len(val_loader)}")
     
     # Optimizer
     optimizer = AdamW(
@@ -368,12 +423,27 @@ def train(
     )
     
     # Mixed precision
-    scaler = GradScaler(enabled=training_config.use_amp)
+    scaler = GradScaler('cuda', enabled=training_config.use_amp)
     
     # Training state
     global_step = 0
     best_rouge_l = 0.0
     running_loss = 0.0
+    
+    # Auto-resume from latest checkpoint if exists
+    if resume_from is None:
+        resume_from = find_latest_checkpoint(training_config.checkpoint_dir)
+    
+    if resume_from and os.path.exists(resume_from):
+        flush_print(f"\n{'='*60}")
+        flush_print("RESUMING FROM CHECKPOINT")
+        flush_print(f"{'='*60}")
+        flush_print(f"Loading: {resume_from}")
+        global_step, best_rouge_l = load_checkpoint(
+            resume_from, model, optimizer, scheduler, scaler
+        )
+        flush_print(f"Resumed at step {global_step} with best ROUGE-L: {best_rouge_l:.4f}")
+        flush_print(f"{'='*60}\n")
     
     # Config for saving
     full_config = {
@@ -382,17 +452,41 @@ def train(
         'training': asdict(training_config),
     }
     
-    logger.info("Starting training...")
-    logger.info(f"Max steps: {training_config.max_steps}")
-    logger.info(f"Batch size: {training_config.batch_size}")
-    logger.info(f"Gradient accumulation: {training_config.gradient_accumulation_steps}")
-    logger.info(f"Effective batch size: {training_config.batch_size * training_config.gradient_accumulation_steps}")
+    flush_print("\n" + "=" * 60)
+    flush_print("STARTING TRAINING")
+    flush_print("=" * 60)
+    flush_print(f"Max steps: {training_config.max_steps}")
+    flush_print(f"Starting from step: {global_step}")
+    flush_print(f"Batch size: {training_config.batch_size}")
+    flush_print(f"Gradient accumulation: {training_config.gradient_accumulation_steps}")
+    flush_print(f"Effective batch size: {training_config.batch_size * training_config.gradient_accumulation_steps}")
+    flush_print(f"Log every: {training_config.log_steps} steps")
+    flush_print(f"Eval every: {training_config.eval_steps} steps")
+    flush_print(f"Save every: {training_config.save_steps} steps")
+    flush_print("=" * 60 + "\n")
     
     model.train()
     optimizer.zero_grad()
     
     start_time = time.time()
     epoch = 0
+    tokens_processed = 0
+    
+    # Calculate total batches needed for remaining steps
+    remaining_steps = training_config.max_steps - global_step
+    total_batches = remaining_steps * training_config.gradient_accumulation_steps
+    
+    # Create progress bar for batches
+    pbar = tqdm(
+        total=total_batches,
+        desc=f"Training",
+        unit="batch",
+        dynamic_ncols=True,
+        bar_format="{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}] Step {postfix}"
+    )
+    pbar.set_postfix_str(f"{global_step}/{training_config.max_steps}")
+    
+    batches_in_current_run = 0
     
     while global_step < training_config.max_steps:
         epoch += 1
@@ -408,15 +502,31 @@ def train(
             src_mask = batch['src_mask'].to(device)
             tgt_mask = batch['tgt_mask'].to(device)
             
+            # Track tokens for throughput
+            batch_tokens = src.numel() + tgt_input.numel()
+            tokens_processed += batch_tokens
+            
             # Forward pass with AMP
-            with autocast(enabled=training_config.use_amp):
+            with autocast('cuda', enabled=training_config.use_amp):
                 logits = model(src, tgt_input, src_mask, tgt_mask)
                 loss = criterion(logits, tgt_output)
                 loss = loss / training_config.gradient_accumulation_steps
             
+            # Check for NaN loss - skip batch if NaN
+            if torch.isnan(loss) or torch.isinf(loss):
+                flush_print(f"WARNING: NaN/Inf loss detected at batch {batch_idx}, skipping...")
+                optimizer.zero_grad()
+                continue
+            
             # Backward pass
             scaler.scale(loss).backward()
             running_loss += loss.item() * training_config.gradient_accumulation_steps
+            
+            # Update progress bar for each batch
+            batches_in_current_run += 1
+            pbar.update(1)
+            gpu_mem_current = torch.cuda.memory_allocated() / 1e9
+            pbar.set_postfix_str(f"{global_step}/{training_config.max_steps} | GPU: {gpu_mem_current:.1f}GB")
             
             # Gradient accumulation
             if (batch_idx + 1) % training_config.gradient_accumulation_steps == 0:
@@ -424,37 +534,51 @@ def train(
                 scaler.unscale_(optimizer)
                 grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), training_config.max_grad_norm)
                 
+                # Check for NaN gradients - skip update if NaN
+                if torch.isnan(grad_norm) or torch.isinf(grad_norm):
+                    flush_print(f"WARNING: NaN/Inf gradient detected at step {global_step}, skipping update...")
+                    optimizer.zero_grad()
+                    scaler.update()
+                    continue
+                
                 # Optimizer step
                 scaler.step(optimizer)
                 scaler.update()
-                scheduler.step()
                 optimizer.zero_grad()
                 
-                global_step += 1
+                # Scheduler step AFTER optimizer step
+                scheduler.step()
                 
-                # Logging
+                global_step += 1
+                pbar.set_postfix_str(f"{global_step}/{training_config.max_steps} | GPU: {torch.cuda.memory_allocated() / 1e9:.1f}GB")
+                
+                # Logging with FLUSH
                 if global_step % training_config.log_steps == 0:
                     avg_loss = running_loss / training_config.log_steps
                     lr = scheduler.get_last_lr()[0]
                     elapsed = time.time() - start_time
-                    steps_per_sec = global_step / elapsed
+                    steps_per_sec = global_step / max(elapsed, 1)
+                    tokens_per_sec = tokens_processed / max(elapsed, 1)
+                    gpu_mem = torch.cuda.max_memory_allocated() / 1e9
                     
-                    logger.info(
-                        f"Step {global_step}/{training_config.max_steps} | "
+                    flush_print(
+                        f"Step {global_step:5d}/{training_config.max_steps} | "
                         f"Loss: {avg_loss:.4f} | "
-                        f"Grad Norm: {grad_norm:.4f} | "
+                        f"GradNorm: {grad_norm:.3f} | "
                         f"LR: {lr:.2e} | "
-                        f"Steps/s: {steps_per_sec:.2f}"
+                        f"tok/s: {tokens_per_sec:.0f} | "
+                        f"GPU: {gpu_mem:.1f}GB"
                     )
                     running_loss = 0.0
                 
                 # Evaluation
                 if global_step % training_config.eval_steps == 0:
-                    logger.info("Running evaluation...")
-                    eval_results = evaluate(model, val_loader, tokenizer, device, max_samples=100)
+                    flush_print("\n" + "-" * 60)
+                    flush_print(f"EVALUATION at Step {global_step}")
+                    flush_print("-" * 60)
+                    eval_results = evaluate(model, val_loader, tokenizer, device, max_samples=50)
                     
-                    logger.info(
-                        f"Eval Step {global_step} | "
+                    flush_print(
                         f"Val Loss: {eval_results['val_loss']:.4f} | "
                         f"ROUGE-1: {eval_results['rouge1']:.4f} | "
                         f"ROUGE-2: {eval_results['rouge2']:.4f} | "
@@ -465,11 +589,12 @@ def train(
                     if eval_results['rougeL'] > best_rouge_l:
                         best_rouge_l = eval_results['rougeL']
                         best_model_path = os.path.join(training_config.checkpoint_dir, 'best_model.pt')
+                        flush_print(f"[NEW BEST] ROUGE-L improved to {best_rouge_l:.4f}")
                         save_checkpoint_atomic(
                             model, optimizer, scheduler, scaler,
                             global_step, best_rouge_l, full_config, best_model_path
                         )
-                        logger.info(f"New best model saved with ROUGE-L: {best_rouge_l:.4f}")
+                    flush_print("-" * 60 + "\n")
                 
                 # Save checkpoint
                 if global_step % training_config.save_steps == 0:
@@ -482,27 +607,51 @@ def train(
                         global_step, best_rouge_l, full_config, checkpoint_path
                     )
     
+    # Close progress bar
+    pbar.close()
+    
     # Final save
+    flush_print("\n" + "=" * 60)
+    flush_print("SAVING FINAL MODEL")
+    flush_print("=" * 60)
     final_model_path = os.path.join(training_config.checkpoint_dir, 'final_model.pt')
     save_checkpoint_atomic(
         model, optimizer, scheduler, scaler,
         global_step, best_rouge_l, full_config, final_model_path
     )
     
-    logger.info("=" * 60)
-    logger.info("TRAINING COMPLETE")
-    logger.info("=" * 60)
-    logger.info(f"Total steps: {global_step}")
-    logger.info(f"Best ROUGE-L: {best_rouge_l:.4f}")
+    flush_print("\n" + "=" * 60)
+    flush_print("TRAINING COMPLETE")
+    flush_print("=" * 60)
+    flush_print(f"Total steps completed: {global_step}")
+    flush_print(f"Best ROUGE-L achieved: {best_rouge_l:.4f}")
     
-    # Verify best model exists
+    # Verify all saved files
+    flush_print("\n--- SAVED FILES VERIFICATION ---")
+    
     best_model_path = os.path.join(training_config.checkpoint_dir, 'best_model.pt')
     if os.path.exists(best_model_path):
         size_mb = os.path.getsize(best_model_path) / (1024 * 1024)
-        logger.info(f"Best model path: {os.path.abspath(best_model_path)}")
-        logger.info(f"Best model size: {size_mb:.1f} MB")
+        flush_print(f"[OK] Best model: {os.path.abspath(best_model_path)} ({size_mb:.2f} MB)")
     else:
-        logger.warning("Best model not found!")
+        flush_print("[WARNING] Best model NOT found!")
+    
+    if os.path.exists(final_model_path):
+        size_mb = os.path.getsize(final_model_path) / (1024 * 1024)
+        flush_print(f"[OK] Final model: {os.path.abspath(final_model_path)} ({size_mb:.2f} MB)")
+    else:
+        flush_print("[WARNING] Final model NOT found!")
+    
+    # List all checkpoints
+    checkpoints = glob.glob(os.path.join(training_config.checkpoint_dir, 'checkpoint_step_*.pt'))
+    if checkpoints:
+        flush_print(f"[OK] Found {len(checkpoints)} intermediate checkpoints")
+        latest = find_latest_checkpoint(training_config.checkpoint_dir)
+        if latest:
+            size_mb = os.path.getsize(latest) / (1024 * 1024)
+            flush_print(f"     Latest: {os.path.abspath(latest)} ({size_mb:.2f} MB)")
+    
+    flush_print("=" * 60)
     
     return best_rouge_l
 
@@ -510,13 +659,18 @@ def train(
 def main():
     parser = argparse.ArgumentParser(description='Train Mamba-Transformer Hybrid Model')
     parser.add_argument('--config', type=str, required=True, help='Path to config YAML')
-    parser.add_argument('--resume', type=str, default=None, help='Path to checkpoint to resume')
+    parser.add_argument('--resume', type=str, default=None, help='Path to checkpoint to resume (auto-detects if not provided)')
     args = parser.parse_args()
+    
+    flush_print("\n" + "=" * 60)
+    flush_print("MAMBA-TRANSFORMER CLINICAL SUMMARIZATION TRAINING")
+    flush_print("=" * 60)
     
     # Check CUDA
     check_cuda()
     
     # Load config
+    flush_print(f"\nLoading config from: {args.config}")
     with open(args.config, 'r') as f:
         config = yaml.safe_load(f)
     
@@ -525,8 +679,12 @@ def main():
     data_config = DataConfig.from_dict(config)
     training_config = TrainingConfig.from_dict(config)
     
+    flush_print(f"Output dir: {training_config.output_dir}")
+    flush_print(f"Checkpoint dir: {training_config.checkpoint_dir}")
+    flush_print(f"Log dir: {training_config.log_dir}")
+    
     # Train
-    train(model_config, data_config, training_config)
+    train(model_config, data_config, training_config, resume_from=args.resume)
 
 
 if __name__ == '__main__':
