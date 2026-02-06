@@ -1,0 +1,64 @@
+# Optimized Training Configuration
+# Target: ROUGE-L >= 0.5, Low Loss, Stable Gradients
+
+model:
+  vocab_size: 16000
+  d_model: 512
+  n_mamba_layers: 6
+  n_decoder_layers: 6
+  n_heads: 8
+  d_ff: 2048
+  dropout: 0.05          # Lower dropout for better learning
+  max_src_len: 4096
+  max_tgt_len: 512
+  chunk_size: 256
+  stride: 192
+  n_memory_tokens: 8
+  mamba_d_state: 16
+  mamba_d_conv: 4
+  mamba_expand: 2
+  pad_id: 3
+  bos_id: 1
+  eos_id: 2
+  label_smoothing: 0.0   # No label smoothing for sharper predictions
+
+data:
+  csv_path: workspace_mamba_longt5_v1/data/mimic-iv-bhc.csv
+  tokenizer_path: workspace_mamba_longt5_v1/data/tokenizer/spm.model
+  max_src_len: 4096
+  max_tgt_len: 512
+  pad_id: 3
+  bos_id: 1
+  eos_id: 2
+  source_col: input
+  target_col: target
+
+training:
+  output_dir: workspace_mamba_longt5_v1/outputs/optimized_run
+  checkpoint_dir: workspace_mamba_longt5_v1/checkpoints/optimized_run
+  log_dir: workspace_mamba_longt5_v1/logs/optimized_run
+  
+  batch_size: 4
+  gradient_accumulation_steps: 8    # Larger effective batch = 32
+  
+  max_steps: 20000                  # Train longer
+  warmup_steps: 1000                # Longer warmup for stability
+  
+  learning_rate: 3.0e-4             # Higher LR for faster convergence
+  weight_decay: 0.001               # Lower weight decay
+  max_grad_norm: 0.5                # Tighter gradient clipping for stability
+  label_smoothing: 0.0              # No smoothing
+  
+  eval_steps: 500
+  save_steps: 1000
+  log_steps: 50
+  
+  use_amp: true
+  seed: 42
+
+# Generation settings for evaluation
+generation:
+  num_beams: 4
+  length_penalty: 1.0
+  no_repeat_ngram_size: 3
+  early_stopping: true
