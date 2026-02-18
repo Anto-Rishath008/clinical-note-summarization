@@ -1,0 +1,71 @@
+# Experiment: Memory Token Isolation Test
+# =========================================
+# ONLY CHANGE vs full_train.yaml: n_memory_tokens: 8 -> 32
+# Everything else IDENTICAL to baseline for clean comparison.
+#
+# Hypothesis: MemoryTokenCompressor bottleneck at 8 tokens/chunk
+#   (3.1% retention) causes template hallucination + entity loss.
+#   32 tokens/chunk (12.5% retention) = 4x more source info to decoder.
+#
+# FRESH training (cannot resume: memory_queries shape changes [8,512]->[32,512])
+# batch_size: 4->2, grad_accum: 4->8 (effective batch still 16) for VRAM safety.
+
+model:
+  vocab_size: 16000
+  d_model: 512
+  n_mamba_layers: 6            # SAME as baseline
+  n_decoder_layers: 6          # SAME as baseline
+  n_heads: 8
+  d_ff: 2048
+  dropout: 0.15                # SAME as baseline (was 0.15 in full_train)
+  max_src_len: 4096
+  max_tgt_len: 512
+  chunk_size: 256
+  stride: 192
+  n_memory_tokens: 32          # <-- THE ONLY CHANGE: 8 -> 32
+  mamba_d_state: 16
+  mamba_d_conv: 4
+  mamba_expand: 2
+  pad_id: 3
+  bos_id: 1
+  eos_id: 2
+  label_smoothing: 0.15        # SAME as baseline
+
+data:
+  csv_path: data/mimic-iv-bhc.csv
+  tokenizer_path: data/tokenizer/spm.model
+  max_src_len: 4096
+  max_tgt_len: 512
+  pad_id: 3
+  bos_id: 1
+  eos_id: 2
+  source_col: input
+  target_col: target
+
+training:
+  output_dir: outputs/memory32_run
+  checkpoint_dir: checkpoints/memory32_run
+  log_dir: logs/memory32_run
+
+  # VRAM-adjusted: 32 mem tokens -> longer cross-attn sequences
+  batch_size: 2                # DOWN from 4 for VRAM safety
+  gradient_accumulation_steps: 8   # UP from 4 (effective batch = 16, same)
+
+  # Full training from scratch -- SAME schedule as baseline
+  max_steps: 50000             # SAME as baseline
+  warmup_steps: 2000           # SAME as baseline
+
+  # Learning rate -- SAME as baseline
+  learning_rate: 5.0e-5        # SAME as baseline
+  weight_decay: 0.03           # SAME as baseline
+  max_grad_norm: 1.0
+  label_smoothing: 0.15        # SAME as baseline
+
+  # Evaluation and checkpointing -- SAME as baseline
+  eval_steps: 1000             # SAME as baseline
+  save_steps: 200              # Lowered from 1000 to avoid losing runs
+  log_steps: 50                # SAME as baseline
+
+  # Mixed precision
+  use_amp: true
+  seed: 42

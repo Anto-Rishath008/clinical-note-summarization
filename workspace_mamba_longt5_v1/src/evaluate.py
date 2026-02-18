@@ -55,6 +55,7 @@ def evaluate_model(
     device: torch.device,
     max_samples: int = None,
     output_file: str = None,
+    max_gen_len: int = 256,
 ) -> Dict[str, float]:
     """
     Evaluate model on validation/test set.
@@ -66,6 +67,7 @@ def evaluate_model(
         device: Device to run on
         max_samples: Maximum samples to evaluate (None for all)
         output_file: Optional file to save predictions
+        max_gen_len: Maximum generation length (default 256)
     
     Returns:
         Dictionary with ROUGE scores
@@ -83,9 +85,9 @@ def evaluate_model(
         tgt_output = batch['tgt_output'].to(device)
         src_mask = batch['src_mask'].to(device)
         
-        # Generate predictions
+        # Generate predictions (greedy=True for deterministic evaluation)
         with autocast(enabled=True):
-            generated = model.generate(src, src_mask, max_len=256)
+            generated = model.generate(src, src_mask, max_len=max_gen_len, greedy=True, no_repeat_ngram_size=3)
         
         for i in range(src.size(0)):
             if max_samples and n_samples >= max_samples:
@@ -156,6 +158,7 @@ def main():
     parser.add_argument('--checkpoint', type=str, required=True, help='Path to model checkpoint')
     parser.add_argument('--config', type=str, default=None, help='Path to config (optional, uses checkpoint config)')
     parser.add_argument('--max_samples', type=int, default=None, help='Max samples to evaluate')
+    parser.add_argument('--max_gen_len', type=int, default=256, help='Maximum generation length (default: 256)')
     parser.add_argument('--output', type=str, default=None, help='Output file for predictions')
     args = parser.parse_args()
     
@@ -182,6 +185,8 @@ def main():
     print("\n" + "=" * 60)
     print("EVALUATION")
     print("=" * 60)
+    print(f"  Decoding: GREEDY (deterministic)")
+    print(f"  Max generation length: {args.max_gen_len}")
     
     rouge_scores = evaluate_model(
         model=model,
@@ -190,6 +195,7 @@ def main():
         device=device,
         max_samples=args.max_samples,
         output_file=args.output,
+        max_gen_len=args.max_gen_len,
     )
     
     print("\n" + "=" * 60)

@@ -466,24 +466,53 @@ class MambaTransformerModel(nn.Module):
         
         return logits
     
+    def _block_repeated_ngrams(self, next_logits: torch.Tensor, generated: torch.Tensor, n: int) -> torch.Tensor:
+        """Block any token that would create a repeated n-gram."""
+        if n <= 0 or generated.size(1) < n:
+            return next_logits
+        batch_size = generated.size(0)
+        for batch_idx in range(batch_size):
+            gen = generated[batch_idx].tolist()
+            # Build set of existing n-grams (using last n-1 tokens + candidate)
+            if len(gen) < n - 1:
+                continue
+            # Collect all existing n-grams
+            ngrams = set()
+            for i in range(len(gen) - n + 1):
+                ngram = tuple(gen[i:i + n])
+                ngrams.add(ngram)
+            # The partial n-gram is the last (n-1) tokens
+            partial = tuple(gen[-(n - 1):])
+            # Block any token that would complete a repeated n-gram
+            for ngram in ngrams:
+                if ngram[:-1] == partial:
+                    next_logits[batch_idx, ngram[-1]] = float('-inf')
+        return next_logits
+
     @torch.no_grad()
     def generate(
         self,
         src: torch.Tensor,
         src_mask: Optional[torch.Tensor] = None,
         max_len: int = 256,
+        greedy: bool = True,
         temperature: float = 1.0,
         top_k: int = 50,
+        no_repeat_ngram_size: int = 3,
+        repetition_penalty: float = 1.0,
     ) -> torch.Tensor:
         """
-        Autoregressive generation.
+        Autoregressive generation with repetition suppression.
         
         Args:
             src: [batch, src_len] source token ids
             src_mask: [batch, src_len] - True for padded positions
             max_len: maximum generation length
-            temperature: sampling temperature
-            top_k: top-k sampling
+            greedy: if True, use greedy decoding (deterministic). Default True.
+            temperature: sampling temperature (only used if greedy=False)
+            top_k: top-k sampling (only used if greedy=False)
+            no_repeat_ngram_size: block repeated n-grams of this size (0 to disable)
+            repetition_penalty: penalize already-generated tokens (1.0 = no penalty)
         
         Returns:
             generated: [batch, gen_len] generated token ids
@@ -506,15 +535,33 @@ class MambaTransformerModel(nn.Module):
             causal_mask = self.generate_causal_mask(generated.size(1), device)
             
             logits = self.decode(generated, memory, causal_mask)
-            next_logits = logits[:, -1, :] / temperature
+            next_logits = logits[:, -1, :]
             
-            # Top-k sampling
-            if top_k > 0:
-                indices_to_remove = next_logits < torch.topk(next_logits, top_k)[0][..., -1, None]
-                next_logits[indices_to_remove] = float('-inf')
+            # Apply repetition penalty to already-generated tokens
+            if repetition_penalty != 1.0:
+                for batch_idx in range(batch_size):
+                    prev_tokens = generated[batch_idx].unique()
+                    for token_id in prev_tokens:
+                        if next_logits[batch_idx, token_id] > 0:
+                            next_logits[batch_idx, token_id] /= repetition_penalty
+                        else:
+                            next_logits[batch_idx, token_id] *= repetition_penalty
             
-            probs = F.softmax(next_logits, dim=-1)
-            next_token = torch.multinomial(probs, num_samples=1)
+            # Block repeated n-grams
+            if no_repeat_ngram_size > 0:
+                next_logits = self._block_repeated_ngrams(next_logits, generated, no_repeat_ngram_size)
+            
+            if greedy:
+                # Deterministic greedy decoding
+                next_token = next_logits.argmax(dim=-1, keepdim=True)
+            else:
+                # Sampling with temperature and top-k
+                next_logits = next_logits / temperature
+                if top_k > 0:
+                    indices_to_remove = next_logits < torch.topk(next_logits, top_k)[0][..., -1, None]
+                    next_logits[indices_to_remove] = float('-inf')
+                probs = F.softmax(next_logits, dim=-1)
+                next_token = torch.multinomial(probs, num_samples=1)
             
             # Don't update finished sequences
             next_token = torch.where(finished.unsqueeze(1), torch.tensor(self.config.pad_id, device=device), next_token)

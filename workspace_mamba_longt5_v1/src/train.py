@@ -343,8 +343,8 @@ def evaluate(
         total_loss += loss.item()
         n_batches += 1
         
-        # Generate predictions
-        generated = model.generate(src, src_mask, max_len=256)
+        # Generate predictions (greedy=True for deterministic evaluation)
+        generated = model.generate(src, src_mask, max_len=256, greedy=True, no_repeat_ngram_size=3)
         
         for i in range(src.size(0)):
             pred_ids = generated[i].cpu().tolist()
@@ -399,6 +399,8 @@ def train(
         config=data_config,
         batch_size=training_config.batch_size,
         num_workers=0,  # For local compatibility
+        max_train_samples=data_config.max_train_samples,
+        max_val_samples=data_config.max_val_samples,
     )
     flush_print(f"Train batches: {len(train_loader)}, Val batches: {len(val_loader)}")
     
@@ -671,7 +673,7 @@ def main():
     
     # Load config
     flush_print(f"\nLoading config from: {args.config}")
-    with open(args.config, 'r') as f:
+    with open(args.config, 'r', encoding='utf-8') as f:
         config = yaml.safe_load(f)
     
     # Create configs

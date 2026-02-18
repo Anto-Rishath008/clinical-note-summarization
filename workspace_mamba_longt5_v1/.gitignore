@@ -39,3 +39,14 @@ kernel-metadata.json
 # OS
 .DS_Store
 Thumbs.db
+
+# Runtime artifacts (not for version control)
+run_artifacts/
+eval_results/
+eval_subsets/
+
+# Data tokenizer cache
+data/tokenizer/
+
+# eval outputs
+outputs/
