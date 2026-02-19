@@ -1,19 +1,28 @@
 """
-Mamba Encoder + Transformer Decoder Hybrid Model
-=================================================
+Mamba-Transformer Hybrid Model V2
+=================================
 
-From-scratch implementation for clinical note summarization.
-Uses Mamba for efficient long-sequence encoding with memory token compression,
-and standard Transformer decoder with cross-attention to memory tokens.
+Improved from-scratch implementation for clinical note summarization.
+Combines ideas from Mamba-2, RetNet, and modern LLMs (LLaMA, PaLM).
+
+V2 Improvements:
+- RMSNorm (from Mamba-2/LLaMA) - faster, more stable normalization
+- SwiGLU feed-forward (from LLaMA/PaLM) - gated activation for better feature mixing
+- Bidirectional Mamba encoder (from Mamba-2) - forward+backward SSM with gated fusion
+- Cross-chunk memory attention (RetNet-inspired) - lets memory tokens interact across chunks
+- Gated cross-attention in decoder (RetNet retention) - learned gates for source-target alignment
+
+All V2 features are backward-compatible via config flags (default=False).
 
 Architecture:
 1. Token Embeddings (SentencePiece vocab)
 2. Chunk long input into fixed length (chunk_size=256, stride=192)
-3. Mamba encoder stack per chunk
+3. Mamba encoder stack per chunk (optionally bidirectional)
 4. Compress each chunk to K memory tokens via learned queries + attention pooling
-5. Concatenate memory tokens across all chunks
-6. Transformer decoder with cross-attention to memory tokens
-7. Output projection to vocab
+5. Cross-chunk memory attention (optional) - memory tokens attend across chunks
+6. Concatenate memory tokens across all chunks
+7. Transformer decoder with cross-attention to memory tokens (optionally gated)
+8. Output projection to vocab
 """
 
 import math
@@ -55,9 +64,68 @@ class MambaTransformerConfig:
     eos_id: int = 2
     label_smoothing: float = 0.1
 
+    # V2 improvements (inspired by Mamba-2, RetNet, LLaMA/PaLM)
+    use_rmsnorm: bool = False             # RMSNorm instead of LayerNorm
+    use_swiglu: bool = False              # SwiGLU feed-forward instead of GELU
+    use_bidirectional_mamba: bool = False  # Bidirectional Mamba encoding
+    use_cross_chunk_attn: bool = False    # Cross-chunk memory attention
+    use_gated_cross_attn: bool = False    # Gated cross-attention in decoder
+    n_cross_chunk_layers: int = 2         # Number of cross-chunk attention layers
+
     @classmethod
     def from_dict(cls, d: dict) -> 'MambaTransformerConfig':
         return cls(**{k: v for k, v in d.items() if k in cls.__dataclass_fields__})
+
+
+# ============================================================================
+# V2 Components: RMSNorm, SwiGLU, factory helpers
+# ============================================================================
+
+class RMSNorm(nn.Module):
+    """Root Mean Square Layer Normalization (Mamba-2 / LLaMA).
+    Faster and more stable than LayerNorm — removes mean-centering,
+    keeps only scale normalization."""
+    def __init__(self, d_model: int, eps: float = 1e-8):
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(d_model))
+        self.eps = eps
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        rms = torch.sqrt(torch.mean(x ** 2, dim=-1, keepdim=True) + self.eps)
+        return self.weight * (x / rms)
+
+
+class SwiGLUFeedForward(nn.Module):
+    """SwiGLU Feed-Forward Network (LLaMA / PaLM).
+    Uses gated linear units with SiLU activation — proven to outperform
+    standard GELU feed-forward in language modeling benchmarks."""
+    def __init__(self, d_model: int, d_ff: int, dropout: float = 0.1):
+        super().__init__()
+        self.w1 = nn.Linear(d_model, d_ff, bias=False)
+        self.w2 = nn.Linear(d_ff, d_model, bias=False)
+        self.w3 = nn.Linear(d_model, d_ff, bias=False)  # gate projection
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.dropout(self.w2(F.silu(self.w1(x)) * self.w3(x)))
+
+
+def create_norm(d_model: int, use_rmsnorm: bool = False) -> nn.Module:
+    """Factory for normalization layers"""
+    return RMSNorm(d_model) if use_rmsnorm else nn.LayerNorm(d_model)
+
+
+def create_ffn(d_model: int, d_ff: int, dropout: float = 0.1, use_swiglu: bool = False) -> nn.Module:
+    """Factory for feed-forward networks"""
+    if use_swiglu:
+        return SwiGLUFeedForward(d_model, d_ff, dropout)
+    return nn.Sequential(
+        nn.Linear(d_model, d_ff),
+        nn.GELU(),
+        nn.Dropout(dropout),
+        nn.Linear(d_ff, d_model),
+        nn.Dropout(dropout),
+    )
 
 
 class MambaFallback(nn.Module):
@@ -96,22 +164,65 @@ class MambaBlock(nn.Module):
         return x
 
 
+class BidirectionalMambaBlock(nn.Module):
+    """Bidirectional Mamba block (inspired by Mamba-2).
+    Processes input both forward and backward through separate Mamba SSMs,
+    then uses a learned gate to fuse both directions. This provides
+    full-context chunk encoding — critical for clinical notes where
+    diagnoses may reference earlier or later findings."""
+    def __init__(self, d_model: int, d_state: int = 16, d_conv: int = 4,
+                 expand: int = 2, dropout: float = 0.1, use_rmsnorm: bool = False):
+        super().__init__()
+        self.norm = create_norm(d_model, use_rmsnorm)
+        if MAMBA_AVAILABLE:
+            self.mamba_fwd = Mamba(d_model=d_model, d_state=d_state, d_conv=d_conv, expand=expand)
+            self.mamba_bwd = Mamba(d_model=d_model, d_state=d_state, d_conv=d_conv, expand=expand)
+        else:
+            self.mamba_fwd = MambaFallback(d_model, d_state, d_conv, expand)
+            self.mamba_bwd = MambaFallback(d_model, d_state, d_conv, expand)
+        self.gate = nn.Linear(d_model * 2, d_model, bias=False)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        residual = x
+        x = self.norm(x)
+        fwd_out = self.mamba_fwd(x)
+        bwd_out = self.mamba_bwd(x.flip(1)).flip(1)
+        gate_val = torch.sigmoid(self.gate(torch.cat([fwd_out, bwd_out], dim=-1)))
+        x = gate_val * fwd_out + (1 - gate_val) * bwd_out
+        return self.dropout(x) + residual
+
+
 class MambaEncoder(nn.Module):
-    """Stack of Mamba blocks for encoding"""
+    """Stack of Mamba blocks for encoding.
+    Supports both unidirectional (V1) and bidirectional (V2) Mamba blocks."""
     def __init__(self, config: MambaTransformerConfig):
         super().__init__()
-        self.layers = nn.ModuleList([
-            MambaBlock(
-                d_model=config.d_model,
-                d_state=config.mamba_d_state,
-                d_conv=config.mamba_d_conv,
-                expand=config.mamba_expand,
-                dropout=config.dropout,
-            )
-            for _ in range(config.n_mamba_layers)
-        ])
-        self.final_norm = nn.LayerNorm(config.d_model)
-    
+        if config.use_bidirectional_mamba:
+            self.layers = nn.ModuleList([
+                BidirectionalMambaBlock(
+                    d_model=config.d_model,
+                    d_state=config.mamba_d_state,
+                    d_conv=config.mamba_d_conv,
+                    expand=config.mamba_expand,
+                    dropout=config.dropout,
+                    use_rmsnorm=config.use_rmsnorm,
+                )
+                for _ in range(config.n_mamba_layers)
+            ])
+        else:
+            self.layers = nn.ModuleList([
+                MambaBlock(
+                    d_model=config.d_model,
+                    d_state=config.mamba_d_state,
+                    d_conv=config.mamba_d_conv,
+                    expand=config.mamba_expand,
+                    dropout=config.dropout,
+                )
+                for _ in range(config.n_mamba_layers)
+            ])
+        self.final_norm = create_norm(config.d_model, config.use_rmsnorm)
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         for layer in self.layers:
             x = layer(x)
@@ -122,7 +233,8 @@ class MemoryTokenCompressor(nn.Module):
     """
     Compress chunk representations to K memory tokens using learned queries and attention pooling.
     """
-    def __init__(self, d_model: int, n_memory_tokens: int = 8, n_heads: int = 8, dropout: float = 0.1):
+    def __init__(self, d_model: int, n_memory_tokens: int = 8, n_heads: int = 8,
+                 dropout: float = 0.1, use_rmsnorm: bool = False):
         super().__init__()
         self.n_memory_tokens = n_memory_tokens
         self.d_model = d_model
@@ -137,7 +249,7 @@ class MemoryTokenCompressor(nn.Module):
             dropout=dropout,
             batch_first=True,
         )
-        self.norm = nn.LayerNorm(d_model)
+        self.norm = create_norm(d_model, use_rmsnorm)
         self.dropout = nn.Dropout(dropout)
     
     def forward(self, chunk_repr: torch.Tensor, chunk_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
@@ -174,26 +286,59 @@ class MemoryTokenCompressor(nn.Module):
         return memory_tokens
 
 
+class CrossChunkAttention(nn.Module):
+    """Cross-chunk memory interaction layer (inspired by RetNet's retention mixing).
+    After each chunk is compressed to K memory tokens, this layer allows
+    memory tokens from *different chunks* to attend to each other.
+    This is critical for long clinical documents where information from
+    early sections (e.g., admission diagnosis) must connect with later
+    sections (e.g., treatment outcomes)."""
+    def __init__(self, d_model: int, n_heads: int, d_ff: int,
+                 dropout: float = 0.1, use_rmsnorm: bool = False,
+                 use_swiglu: bool = False):
+        super().__init__()
+        self.norm1 = create_norm(d_model, use_rmsnorm)
+        self.attn = nn.MultiheadAttention(d_model, n_heads, dropout=dropout, batch_first=True)
+        self.dropout = nn.Dropout(dropout)
+        self.norm2 = create_norm(d_model, use_rmsnorm)
+        self.ff = create_ffn(d_model, d_ff, dropout, use_swiglu)
+
+    def forward(self, memory: torch.Tensor) -> torch.Tensor:
+        """memory: [batch, total_memory_tokens, d_model]"""
+        residual = memory
+        memory = self.norm1(memory)
+        memory, _ = self.attn(memory, memory, memory)
+        memory = self.dropout(memory) + residual
+
+        residual = memory
+        memory = self.norm2(memory)
+        memory = self.ff(memory) + residual
+        return memory
+
+
 class TransformerDecoderLayer(nn.Module):
-    """Standard Transformer decoder layer with self-attention and cross-attention"""
-    def __init__(self, d_model: int, n_heads: int, d_ff: int, dropout: float = 0.1):
+    """Transformer decoder layer with self-attention and cross-attention.
+    V2: supports SwiGLU FFN, RMSNorm, and gated cross-attention."""
+    def __init__(self, d_model: int, n_heads: int, d_ff: int, dropout: float = 0.1,
+                 use_rmsnorm: bool = False, use_swiglu: bool = False,
+                 use_gated_cross_attn: bool = False):
         super().__init__()
         self.self_attn = nn.MultiheadAttention(d_model, n_heads, dropout=dropout, batch_first=True)
         self.cross_attn = nn.MultiheadAttention(d_model, n_heads, dropout=dropout, batch_first=True)
-        
-        self.ff = nn.Sequential(
-            nn.Linear(d_model, d_ff),
-            nn.GELU(),
-            nn.Dropout(dropout),
-            nn.Linear(d_ff, d_model),
-            nn.Dropout(dropout),
-        )
-        
-        self.norm1 = nn.LayerNorm(d_model)
-        self.norm2 = nn.LayerNorm(d_model)
-        self.norm3 = nn.LayerNorm(d_model)
+
+        self.ff = create_ffn(d_model, d_ff, dropout, use_swiglu)
+
+        self.norm1 = create_norm(d_model, use_rmsnorm)
+        self.norm2 = create_norm(d_model, use_rmsnorm)
+        self.norm3 = create_norm(d_model, use_rmsnorm)
         self.dropout = nn.Dropout(dropout)
-    
+
+        # Gated cross-attention (RetNet-inspired): learned gate controls
+        # how much source information flows into the decoder at each layer
+        self.use_gated_cross_attn = use_gated_cross_attn
+        if use_gated_cross_attn:
+            self.cross_gate = nn.Parameter(torch.tensor(0.0))  # sigmoid(0)=0.5 initial
+
     def forward(
         self,
         x: torch.Tensor,
@@ -207,23 +352,26 @@ class TransformerDecoderLayer(nn.Module):
         x = self.norm1(x)
         x, _ = self.self_attn(x, x, x, attn_mask=tgt_mask, key_padding_mask=tgt_key_padding_mask)
         x = self.dropout(x) + residual
-        
-        # Cross-attention to memory tokens
+
+        # Cross-attention to memory tokens (optionally gated)
         residual = x
         x = self.norm2(x)
-        x, _ = self.cross_attn(x, memory, memory, key_padding_mask=memory_key_padding_mask)
-        x = self.dropout(x) + residual
-        
+        cross_out, _ = self.cross_attn(x, memory, memory, key_padding_mask=memory_key_padding_mask)
+        if self.use_gated_cross_attn:
+            x = torch.sigmoid(self.cross_gate) * self.dropout(cross_out) + residual
+        else:
+            x = self.dropout(cross_out) + residual
+
         # Feed-forward
         residual = x
         x = self.norm3(x)
         x = self.ff(x) + residual
-        
+
         return x
 
 
 class TransformerDecoder(nn.Module):
-    """Stack of Transformer decoder layers"""
+    """Stack of Transformer decoder layers (V2: supports RMSNorm, SwiGLU, gated cross-attn)"""
     def __init__(self, config: MambaTransformerConfig):
         super().__init__()
         self.layers = nn.ModuleList([
@@ -232,10 +380,13 @@ class TransformerDecoder(nn.Module):
                 n_heads=config.n_heads,
                 d_ff=config.d_ff,
                 dropout=config.dropout,
+                use_rmsnorm=config.use_rmsnorm,
+                use_swiglu=config.use_swiglu,
+                use_gated_cross_attn=config.use_gated_cross_attn,
             )
             for _ in range(config.n_decoder_layers)
         ])
-        self.final_norm = nn.LayerNorm(config.d_model)
+        self.final_norm = create_norm(config.d_model, config.use_rmsnorm)
     
     def forward(
         self,
@@ -270,16 +421,17 @@ class PositionalEncoding(nn.Module):
 
 class MambaTransformerModel(nn.Module):
     """
-    Mamba Encoder + Transformer Decoder Hybrid Model for Summarization
+    Mamba-Transformer Hybrid Model V2 for Clinical Summarization
     
     Architecture:
     1. Embed input tokens
     2. Chunk input sequence (chunk_size=256, stride=192)
-    3. Encode each chunk with Mamba
-    4. Compress each chunk to K=8 memory tokens
-    5. Concatenate all memory tokens
-    6. Decode with Transformer decoder cross-attending to memory
-    7. Project to vocabulary
+    3. Encode each chunk with Mamba (optionally bidirectional)
+    4. Compress each chunk to K memory tokens
+    5. Cross-chunk memory attention (optional) — memory tokens attend across chunks
+    6. Concatenate all memory tokens
+    7. Decode with Transformer decoder cross-attending to memory (optionally gated)
+    8. Project to vocabulary
     """
     def __init__(self, config: MambaTransformerConfig):
         super().__init__()
@@ -299,7 +451,23 @@ class MambaTransformerModel(nn.Module):
             n_memory_tokens=config.n_memory_tokens,
             n_heads=config.n_heads,
             dropout=config.dropout,
+            use_rmsnorm=config.use_rmsnorm,
         )
+        
+        # Cross-chunk memory interaction (V2: RetNet-inspired)
+        self.cross_chunk_attn = None
+        if config.use_cross_chunk_attn:
+            self.cross_chunk_attn = nn.ModuleList([
+                CrossChunkAttention(
+                    d_model=config.d_model,
+                    n_heads=config.n_heads,
+                    d_ff=config.d_ff,
+                    dropout=config.dropout,
+                    use_rmsnorm=config.use_rmsnorm,
+                    use_swiglu=config.use_swiglu,
+                )
+                for _ in range(config.n_cross_chunk_layers)
+            ])
         
         # Decoder (Transformer)
         self.decoder = TransformerDecoder(config)
@@ -387,6 +555,12 @@ class MambaTransformerModel(nn.Module):
         
         # Concatenate all memory tokens
         memory = torch.cat(all_memory, dim=1)
+        
+        # Cross-chunk memory interaction (V2)
+        if self.cross_chunk_attn is not None:
+            for layer in self.cross_chunk_attn:
+                memory = layer(memory)
+        
         return memory
     
     def decode(
@@ -590,4 +764,15 @@ def build_model(config: MambaTransformerConfig) -> MambaTransformerModel:
     print(f"  - n_heads: {config.n_heads}")
     print(f"  - Chunk size: {config.chunk_size}, stride: {config.stride}")
     print(f"  - Memory tokens per chunk: {config.n_memory_tokens}")
+    # V2 features
+    v2_features = []
+    if config.use_rmsnorm: v2_features.append('RMSNorm')
+    if config.use_swiglu: v2_features.append('SwiGLU')
+    if config.use_bidirectional_mamba: v2_features.append('BiMamba')
+    if config.use_cross_chunk_attn: v2_features.append(f'CrossChunkAttn(×{config.n_cross_chunk_layers})')
+    if config.use_gated_cross_attn: v2_features.append('GatedCrossAttn')
+    if v2_features:
+        print(f"  - V2 features: {', '.join(v2_features)}")
+    else:
+        print(f"  - V2 features: None (baseline mode)")
     return model

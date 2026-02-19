@@ -31,6 +31,16 @@ model:
   eos_id: 2
   label_smoothing: 0.15        # SAME as baseline
 
+  # V2 improvements (uncomment for next training run)
+  # These are inspired by Mamba-2, RetNet, and modern LLMs (LLaMA, PaLM).
+  # WARNING: Enabling these changes model architecture — incompatible with V1 checkpoints.
+  # use_rmsnorm: true              # RMSNorm instead of LayerNorm (faster, more stable)
+  # use_swiglu: true               # SwiGLU FFN instead of GELU (better feature mixing)
+  # use_bidirectional_mamba: true   # Forward+backward Mamba with gated fusion
+  # use_cross_chunk_attn: true     # Memory tokens attend across chunks (RetNet-inspired)
+  # use_gated_cross_attn: true     # Learned gates on decoder cross-attention
+  # n_cross_chunk_layers: 2        # Number of cross-chunk attention layers
+
 data:
   csv_path: data/mimic-iv-bhc.csv
   tokenizer_path: data/tokenizer/spm.model

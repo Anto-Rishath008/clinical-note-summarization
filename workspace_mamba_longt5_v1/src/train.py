@@ -54,6 +54,44 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+class TeeOutput:
+    """Duplicate stdout/stderr writes to a log file AND the terminal simultaneously."""
+    def __init__(self, filepath: str, original):
+        self.original = original
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+        self.logfile = open(filepath, 'a', encoding='utf-8', buffering=1)  # line-buffered
+
+    def write(self, data: str):
+        self.original.write(data)
+        self.original.flush()
+        self.logfile.write(data)
+        self.logfile.flush()
+
+    def flush(self):
+        self.original.flush()
+        self.logfile.flush()
+
+    def isatty(self):
+        return False
+
+    def close(self):
+        self.logfile.close()
+
+
+def setup_file_logging(log_dir: str, name: str = 'train') -> str:
+    """Redirect stdout and stderr to both terminal and log file."""
+    os.makedirs(log_dir, exist_ok=True)
+    log_path = os.path.join(log_dir, f'{name}.log')
+    err_path = os.path.join(log_dir, f'{name}_err.log')
+    sys.stdout = TeeOutput(log_path, sys.__stdout__)
+    sys.stderr = TeeOutput(err_path, sys.__stderr__)
+    # Also add file handler to logger
+    fh = logging.FileHandler(log_path, encoding='utf-8')
+    fh.setFormatter(logging.Formatter('%(asctime)s | %(levelname)s | %(message)s', '%Y-%m-%d %H:%M:%S'))
+    logging.getLogger().addHandler(fh)
+    return log_path
+
+
 def flush_print(msg: str):
     """Print with immediate flush for live terminal output"""
     print(msg, flush=True)
@@ -435,6 +473,8 @@ def train(
     # Auto-resume from latest checkpoint if exists
     if resume_from is None:
         resume_from = find_latest_checkpoint(training_config.checkpoint_dir)
+    elif os.path.isdir(resume_from):
+        resume_from = find_latest_checkpoint(resume_from)
     
     if resume_from and os.path.exists(resume_from):
         flush_print(f"\n{'='*60}")
@@ -684,7 +724,11 @@ def main():
     flush_print(f"Output dir: {training_config.output_dir}")
     flush_print(f"Checkpoint dir: {training_config.checkpoint_dir}")
     flush_print(f"Log dir: {training_config.log_dir}")
-    
+
+    # Redirect stdout/stderr to log file
+    log_path = setup_file_logging(training_config.log_dir)
+    flush_print(f"\nLogging to: {os.path.abspath(log_path)}")
+
     # Train
     train(model_config, data_config, training_config, resume_from=args.resume)
 
