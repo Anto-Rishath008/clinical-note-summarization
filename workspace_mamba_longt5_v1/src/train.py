@@ -113,7 +113,8 @@ class TrainingConfig:
     learning_rate: float = 5e-4
     weight_decay: float = 0.01
     max_grad_norm: float = 1.0
-    label_smoothing: float = 0.1
+    label_smoothing: float = 0.0
+    num_lr_restarts: int = 2
     
     # Evaluation
     eval_steps: int = 500
@@ -184,13 +185,38 @@ def get_cosine_schedule_with_warmup(
     num_warmup_steps: int,
     num_training_steps: int,
     min_lr_ratio: float = 0.1,
+    num_restarts: int = 2,
 ):
-    """Cosine schedule with linear warmup"""
+    """Cosine schedule with linear warmup and warm restarts.
+    
+    Divides training into `num_restarts + 1` cycles. Each cycle has a fresh
+    cosine decay from peak LR, allowing the model to escape plateaus.
+    The peak LR decreases by 0.7x each cycle for stability.
+    min_lr_ratio sets the floor at 10% of base LR.
+    """
     def lr_lambda(current_step: int):
         if current_step < num_warmup_steps:
             return float(current_step) / float(max(1, num_warmup_steps))
-        progress = float(current_step - num_warmup_steps) / float(max(1, num_training_steps - num_warmup_steps))
-        return max(min_lr_ratio, 0.5 * (1.0 + math.cos(math.pi * progress)))
+        
+        post_warmup = current_step - num_warmup_steps
+        total_post_warmup = num_training_steps - num_warmup_steps
+        
+        if num_restarts <= 0:
+            # Standard cosine decay
+            progress = float(post_warmup) / float(max(1, total_post_warmup))
+            return max(min_lr_ratio, 0.5 * (1.0 + math.cos(math.pi * progress)))
+        
+        # Cosine with warm restarts
+        cycle_length = total_post_warmup // (num_restarts + 1)
+        cycle_idx = min(post_warmup // max(1, cycle_length), num_restarts)
+        cycle_progress = (post_warmup - cycle_idx * cycle_length) / float(max(1, cycle_length))
+        cycle_progress = min(cycle_progress, 1.0)
+        
+        # Each restart has a lower peak (0.7^cycle_idx)
+        peak_ratio = 0.7 ** cycle_idx
+        cosine_val = 0.5 * (1.0 + math.cos(math.pi * cycle_progress))
+        
+        return max(min_lr_ratio, peak_ratio * cosine_val)
     
     return LambdaLR(optimizer, lr_lambda)
 
@@ -310,6 +336,11 @@ def find_latest_checkpoint(checkpoint_dir: str) -> Optional[str]:
     
     checkpoints = glob.glob(os.path.join(checkpoint_dir, 'checkpoint_step_*.pt'))
     if not checkpoints:
+        # Fallback: check for best_model.pt
+        best = os.path.join(checkpoint_dir, 'best_model.pt')
+        if os.path.exists(best):
+            flush_print(f"  Found best_model.pt as fallback checkpoint")
+            return best
         return None
     
     # Sort by step number
@@ -329,18 +360,70 @@ def load_checkpoint(
     optimizer: Optional[torch.optim.Optimizer] = None,
     scheduler=None,
     scaler: Optional[GradScaler] = None,
+    reset_optimizer: bool = False,
+    boost_cross_gates: bool = True,
 ) -> Tuple[int, float]:
-    """Load checkpoint and return step and best ROUGE-L"""
+    """Load checkpoint and return step and best ROUGE-L.
+    
+    Args:
+        reset_optimizer: If True, don't load optimizer/scheduler state (fresh LR restart)
+        boost_cross_gates: If True, boost suppressed cross-attention gate values
+    """
     checkpoint = torch.load(checkpoint_path, map_location='cuda', weights_only=False)
     
-    model.load_state_dict(checkpoint['model_state_dict'])
+    # Load model state (with flexibility for new/changed params)
+    model_state = checkpoint['model_state_dict']
+    current_state = model.state_dict()
     
-    if optimizer is not None:
-        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-    if scheduler is not None:
-        scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
-    if scaler is not None:
-        scaler.load_state_dict(checkpoint['scaler_state_dict'])
+    # Check for mismatched keys and handle gracefully
+    missing = set(current_state.keys()) - set(model_state.keys())
+    unexpected = set(model_state.keys()) - set(current_state.keys())
+    if missing:
+        flush_print(f"  New params (randomly initialized): {missing}")
+    if unexpected:
+        flush_print(f"  Removed params (ignored): {unexpected}")
+    
+    # Load compatible keys
+    compatible_state = {k: v for k, v in model_state.items() if k in current_state and v.shape == current_state[k].shape}
+    current_state.update(compatible_state)
+    model.load_state_dict(current_state)
+    
+    # Boost cross-attention gates if they were suppressed
+    if boost_cross_gates:
+        with torch.no_grad():
+            boosted = 0
+            for name, param in model.named_parameters():
+                if 'cross_gate' in name:
+                    old_val = param.item()
+                    old_sigmoid = torch.sigmoid(torch.tensor(old_val)).item()
+                    # With new additive gating: (1 + sigmoid(gate))
+                    # Set gate to 1.0 so (1 + sigmoid(1)) = 1.73x boost
+                    new_val = 1.0
+                    param.fill_(new_val)
+                    new_sigmoid = torch.sigmoid(torch.tensor(new_val)).item()
+                    flush_print(f"  Boosted {name}: {old_val:.4f} (old mult: {old_sigmoid:.3f}) -> {new_val:.4f} (new additive: 1+{new_sigmoid:.3f}={1+new_sigmoid:.3f}x)")
+                    boosted += 1
+            if boosted > 0:
+                flush_print(f"  Boosted {boosted} cross-attention gates for stronger source conditioning")
+    
+    if not reset_optimizer:
+        if optimizer is not None:
+            try:
+                optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            except Exception as e:
+                flush_print(f"  Could not load optimizer state: {e}. Starting fresh.")
+        if scheduler is not None:
+            try:
+                scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+            except Exception as e:
+                flush_print(f"  Could not load scheduler state: {e}. Starting fresh.")
+        if scaler is not None:
+            try:
+                scaler.load_state_dict(checkpoint['scaler_state_dict'])
+            except Exception as e:
+                flush_print(f"  Could not load scaler state: {e}. Starting fresh.")
+    else:
+        flush_print("  Optimizer/scheduler state RESET for fresh LR warm restart")
     
     return checkpoint.get('step', 0), checkpoint.get('best_rouge_l', 0.0)
 
@@ -351,17 +434,16 @@ def evaluate(
     val_loader,
     tokenizer,
     device: torch.device,
-    max_samples: int = 100,
+    max_samples: int = 200,
 ) -> Dict[str, float]:
-    """Evaluate model and compute ROUGE scores"""
+    """Evaluate model and compute ROUGE scores.
+    Uses greedy decoding for stable, fast metrics."""
     model.eval()
     
     predictions = []
     references = []
     total_loss = 0.0
     n_batches = 0
-    
-    criterion = LabelSmoothingLoss(smoothing=0.1, ignore_index=3)
     
     for batch_idx, batch in enumerate(val_loader):
         if batch_idx * val_loader.batch_size >= max_samples:
@@ -373,16 +455,27 @@ def evaluate(
         src_mask = batch['src_mask'].to(device)
         tgt_mask = batch['tgt_mask'].to(device)
         
-        # Compute loss
+        # Compute loss (cross_entropy handles logits directly)
         with autocast('cuda', enabled=True):
             logits = model(src, tgt_input, src_mask, tgt_mask)
-            loss = criterion(logits, tgt_output)
+            loss = F.cross_entropy(
+                logits.reshape(-1, logits.size(-1)),
+                tgt_output.reshape(-1),
+                ignore_index=3,
+            )
         
         total_loss += loss.item()
         n_batches += 1
         
-        # Generate predictions (greedy=True for deterministic evaluation)
-        generated = model.generate(src, src_mask, max_len=256, greedy=True, no_repeat_ngram_size=3)
+        # Generate with greedy decoding (fast and stable for evaluation)
+        generated = model.generate(
+            src, src_mask,
+            max_len=512,
+            min_len=200,             # match reference lengths for better ROUGE recall
+            greedy=True,             # greedy for stable metrics
+            no_repeat_ngram_size=3,
+            repetition_penalty=1.0,  # no penalty - let copy mechanism work freely
+        )
         
         for i in range(src.size(0)):
             pred_ids = generated[i].cpu().tolist()
@@ -398,6 +491,16 @@ def evaluate(
     # Compute ROUGE
     rouge_scores = compute_rouge(predictions, references)
     rouge_scores['val_loss'] = total_loss / max(n_batches, 1)
+    
+    # Log sample predictions for debugging ROUGE-L
+    n_samples_to_show = min(3, len(predictions))
+    if n_samples_to_show > 0:
+        flush_print("\n--- Sample Predictions vs References ---")
+        for i in range(n_samples_to_show):
+            flush_print(f"  [Sample {i+1}]")
+            flush_print(f"    Pred ({len(predictions[i].split())} words): {predictions[i][:300]}...")
+            flush_print(f"    Ref  ({len(references[i].split())} words): {references[i][:300]}...")
+        flush_print("--- End Samples ---\n")
     
     model.train()
     return rouge_scores
@@ -449,18 +552,16 @@ def train(
         weight_decay=training_config.weight_decay,
     )
     
-    # Scheduler
+    # Scheduler - cosine with warm restarts to escape plateaus
     scheduler = get_cosine_schedule_with_warmup(
         optimizer,
         num_warmup_steps=training_config.warmup_steps,
         num_training_steps=training_config.max_steps,
+        num_restarts=getattr(training_config, 'num_lr_restarts', 2),
     )
     
-    # Loss
-    criterion = LabelSmoothingLoss(
-        smoothing=training_config.label_smoothing,
-        ignore_index=data_config.pad_id,
-    )
+    # Loss (NLL loss since model returns log_probs)
+    pad_id = data_config.pad_id
     
     # Mixed precision
     scaler = GradScaler('cuda', enabled=training_config.use_amp)
@@ -482,9 +583,16 @@ def train(
         flush_print(f"{'='*60}")
         flush_print(f"Loading: {resume_from}")
         global_step, best_rouge_l = load_checkpoint(
-            resume_from, model, optimizer, scheduler, scaler
+            resume_from, model, optimizer, scheduler, scaler,
+            reset_optimizer=True,    # Fresh LR for warm restart
+            boost_cross_gates=False, # Additive gates already fixed
         )
+        # Reset copy mechanism gate to balanced after loading
+        if hasattr(model, 'copy_mechanism') and model.copy_mechanism is not None:
+            nn.init.constant_(model.copy_mechanism.gate_linear.bias, 3.0)
+            flush_print("  Copy mechanism gate set to mostly-generate (p_gen=0.953)")
         flush_print(f"Resumed at step {global_step} with best ROUGE-L: {best_rouge_l:.4f}")
+        flush_print(f"Eval every: {training_config.eval_steps} steps")
         flush_print(f"{'='*60}\n")
     
     # Config for saving
@@ -530,6 +638,16 @@ def train(
     
     batches_in_current_run = 0
     
+    # Register state for emergency save on crash/signal
+    if hasattr(__builtins__, '_emergency_state') or hasattr(getattr(__builtins__, '__class__', type(None)), '_emergency_state'):
+        import builtins
+        if hasattr(builtins, '_emergency_state'):
+            builtins._emergency_state.update({
+                'model': model, 'optimizer': optimizer, 'scheduler': scheduler,
+                'scaler': scaler, 'step': global_step, 'best_rouge_l': best_rouge_l,
+                'config': full_config, 'ckpt_dir': training_config.checkpoint_dir,
+            })
+    
     while global_step < training_config.max_steps:
         epoch += 1
         
@@ -547,22 +665,36 @@ def train(
             # Track tokens for throughput
             batch_tokens = src.numel() + tgt_input.numel()
             tokens_processed += batch_tokens
-            
-            # Forward pass with AMP
-            with autocast('cuda', enabled=training_config.use_amp):
-                logits = model(src, tgt_input, src_mask, tgt_mask)
-                loss = criterion(logits, tgt_output)
-                loss = loss / training_config.gradient_accumulation_steps
-            
-            # Check for NaN loss - skip batch if NaN
-            if torch.isnan(loss) or torch.isinf(loss):
-                flush_print(f"WARNING: NaN/Inf loss detected at batch {batch_idx}, skipping...")
-                optimizer.zero_grad()
-                continue
-            
-            # Backward pass
-            scaler.scale(loss).backward()
-            running_loss += loss.item() * training_config.gradient_accumulation_steps
+
+            # Forward pass with AMP + OOM protection
+            try:
+                with autocast('cuda', enabled=training_config.use_amp):
+                    logits = model(src, tgt_input, src_mask, tgt_mask)
+                    loss = F.cross_entropy(
+                        logits.reshape(-1, logits.size(-1)),
+                        tgt_output.reshape(-1),
+                        ignore_index=pad_id,
+                    )
+                    loss = loss / training_config.gradient_accumulation_steps
+                
+                # Check for NaN loss - skip batch if NaN
+                if torch.isnan(loss) or torch.isinf(loss):
+                    flush_print(f"WARNING: NaN/Inf loss at batch {batch_idx}, skipping...")
+                    optimizer.zero_grad()
+                    continue
+                
+                # Backward pass
+                scaler.scale(loss).backward()
+            except RuntimeError as oom_err:
+                if 'out of memory' in str(oom_err):
+                    flush_print(f"WARNING: OOM at batch {batch_idx}, skipping...")
+                    torch.cuda.empty_cache()
+                    optimizer.zero_grad()
+                    continue
+                else:
+                    raise
+
+            running_loss += loss.item()
             
             # Update progress bar for each batch
             batches_in_current_run += 1
@@ -592,10 +724,18 @@ def train(
                 scheduler.step()
                 
                 global_step += 1
+                # Update emergency state step counter
+                import builtins
+                if hasattr(builtins, '_emergency_state') and builtins._emergency_state.get('model'):
+                    builtins._emergency_state['step'] = global_step
+                    builtins._emergency_state['best_rouge_l'] = best_rouge_l
                 pbar.set_postfix_str(f"{global_step}/{training_config.max_steps} | GPU: {torch.cuda.memory_allocated() / 1e9:.1f}GB")
                 
                 # Logging with FLUSH
                 if global_step % training_config.log_steps == 0:
+                    # running_loss accumulates loss.item() (= criterion_loss / grad_accum) per mini-batch
+                    # Per step: sum of grad_accum values of (loss/grad_accum) = average loss from that step
+                    # Over log_steps: avg_loss = running_loss / log_steps = true per-token loss
                     avg_loss = running_loss / training_config.log_steps
                     lr = scheduler.get_last_lr()[0]
                     elapsed = time.time() - start_time
@@ -613,12 +753,27 @@ def train(
                     )
                     running_loss = 0.0
                 
+                # Check for manual save trigger file
+                trigger_path = os.path.join(training_config.checkpoint_dir, '..', '..', 'SAVE_NOW')
+                if os.path.exists(trigger_path):
+                    flush_print(f"[MANUAL SAVE] Trigger file detected, saving checkpoint...")
+                    manual_path = os.path.join(
+                        training_config.checkpoint_dir,
+                        f'manual_checkpoint_step_{global_step}.pt'
+                    )
+                    save_checkpoint_atomic(
+                        model, optimizer, scheduler, scaler,
+                        global_step, best_rouge_l, full_config, manual_path
+                    )
+                    os.remove(trigger_path)
+                    flush_print(f"[MANUAL SAVE] Trigger file removed. Training continues.")
+                
                 # Evaluation
                 if global_step % training_config.eval_steps == 0:
                     flush_print("\n" + "-" * 60)
                     flush_print(f"EVALUATION at Step {global_step}")
                     flush_print("-" * 60)
-                    eval_results = evaluate(model, val_loader, tokenizer, device, max_samples=50)
+                    eval_results = evaluate(model, val_loader, tokenizer, device, max_samples=100)
                     
                     flush_print(
                         f"Val Loss: {eval_results['val_loss']:.4f} | "
@@ -734,4 +889,70 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    import signal, traceback, atexit
+    
+    crash_log = open('crash_report.log', 'w')
+    
+    # Global refs for emergency save (populated by train())
+    _emergency_state = {}
+    
+    def emergency_save(reason='unknown'):
+        """Save checkpoint on crash/signal/exit"""
+        state = _emergency_state
+        if not state.get('model'):
+            crash_log.write(f'Emergency save skipped: no model loaded yet\n')
+            return
+        try:
+            import torch, os, shutil
+            ckpt_dir = state.get('ckpt_dir', 'checkpoints/v2_run')
+            path = os.path.join(ckpt_dir, f'emergency_step_{state.get("step", 0)}.pt')
+            torch.save({
+                'step': state.get('step', 0),
+                'model_state_dict': state['model'].state_dict(),
+                'optimizer_state_dict': state.get('optimizer', {}).state_dict() if hasattr(state.get('optimizer', {}), 'state_dict') else {},
+                'scheduler_state_dict': state.get('scheduler', {}).state_dict() if hasattr(state.get('scheduler', {}), 'state_dict') else {},
+                'scaler_state_dict': state.get('scaler', {}).state_dict() if hasattr(state.get('scaler', {}), 'state_dict') else {},
+                'best_rouge_l': state.get('best_rouge_l', 0.0),
+                'config': state.get('config', {}),
+            }, path)
+            crash_log.write(f'EMERGENCY SAVE: {path} ({os.path.getsize(path)/1e6:.1f}MB) reason={reason}\n')
+        except Exception as save_err:
+            crash_log.write(f'EMERGENCY SAVE FAILED: {save_err}\n')
+    
+    def crash_handler(sig, frame):
+        crash_log.write(f'SIGNAL {sig} received!\n')
+        crash_log.write(traceback.format_stack(frame).__str__() + '\n')
+        crash_log.flush()
+        emergency_save(reason=f'signal_{sig}')
+        crash_log.flush()
+        crash_log.close()
+        
+    for sig in [signal.SIGTERM, signal.SIGABRT, signal.SIGBREAK]:
+        try:
+            signal.signal(sig, crash_handler)
+        except (OSError, ValueError):
+            pass
+    
+    def at_exit():
+        crash_log.write('ATEXIT called\n')
+        import torch
+        if torch.cuda.is_available():
+            crash_log.write(f'GPU mem at exit: {torch.cuda.memory_allocated()/1e9:.2f}GB\n')
+        emergency_save(reason='atexit')
+        crash_log.flush()
+        crash_log.close()
+    atexit.register(at_exit)
+    
+    # Make _emergency_state accessible to train()
+    import builtins
+    builtins._emergency_state = _emergency_state
+    
+    try:
+        main()
+    except Exception as e:
+        crash_log.write(f'EXCEPTION: {type(e).__name__}: {e}\n')
+        crash_log.write(traceback.format_exc() + '\n')
+        crash_log.flush()
+        emergency_save(reason=f'exception_{type(e).__name__}')
+        crash_log.close()
+        raise

@@ -55,7 +55,7 @@ def evaluate_model(
     device: torch.device,
     max_samples: int = None,
     output_file: str = None,
-    max_gen_len: int = 256,
+    max_gen_len: int = 512,
 ) -> Dict[str, float]:
     """
     Evaluate model on validation/test set.
@@ -85,9 +85,17 @@ def evaluate_model(
         tgt_output = batch['tgt_output'].to(device)
         src_mask = batch['src_mask'].to(device)
         
-        # Generate predictions (greedy=True for deterministic evaluation)
+        # Generate predictions using beam search for better quality
         with autocast(enabled=True):
-            generated = model.generate(src, src_mask, max_len=max_gen_len, greedy=True, no_repeat_ngram_size=3)
+            generated = model.generate(
+                src, src_mask,
+                max_len=max_gen_len,
+                greedy=False,
+                beam_size=4,
+                length_penalty=0.8,
+                no_repeat_ngram_size=3,
+                repetition_penalty=1.2,
+            )
         
         for i in range(src.size(0)):
             if max_samples and n_samples >= max_samples:

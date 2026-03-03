@@ -184,6 +184,9 @@ tgt_embedding = nn.Embedding(vocab_size=16000, d_model=512, padding_idx=3)
 PE(pos, 2i)   = sin(pos / 10000^(2i / d_model))
 PE(pos, 2i+1) = cos(pos / 10000^(2i / d_model))
 
+
+
+
 where: pos = position in sequence (0, 1, 2, ...)
        i   = dimension index (0, 1, ..., 255)
 ```
