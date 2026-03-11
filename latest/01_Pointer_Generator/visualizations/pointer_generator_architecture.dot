@@ -1,0 +1,224 @@
+// Pointer-Generator Network Architecture (Landscape)
+digraph {
+	graph [rankdir=LR ratio=0.25 size="20,5" bgcolor=white pad="0.5" nodesep=0.25 ranksep=0.8]
+	node [fontname="Arial" fontsize=9 shape=box style="rounded,filled" margin="0.1,0.05"]
+	edge [fontsize=8 arrowsize=0.5]
+	
+	// ==================== 1. INPUT MODULE ====================
+	subgraph cluster_input {
+		label="1. Input Module" labelloc=t fontsize=11 fontname="Arial Bold"
+		style="filled,rounded" fillcolor="#FFF9C4" color="#F9A825" penwidth=2
+		graph [rank=same]
+		
+		// Force top-to-bottom within cluster
+		i_input [label="Input (x)" shape=ellipse fillcolor="#81D4FA" width=1.2]
+		
+		i_shape1 [label="(B, T)" fillcolor=white shape=plaintext fontsize=8]
+		
+		i_embed [label="Embedding\n(16000, 128)" fillcolor="#E1F5FE" width=1.4]
+		
+		i_shape2 [label="(B, T, 128)" fillcolor=white shape=plaintext fontsize=8]
+		
+		i_drop [label="Dropout\n(0.3)" fillcolor="#B3E5FC" width=1.4]
+		
+		i_shape3 [label="(B, T, 128)" fillcolor=white shape=plaintext fontsize=8]
+		
+		// Vertical flow
+		i_input -> i_shape1 [arrowhead=none]
+		i_shape1 -> i_embed
+		i_embed -> i_shape2 [arrowhead=none]
+		i_shape2 -> i_drop
+		i_drop -> i_shape3 [arrowhead=none]
+	}
+	
+	// ==================== 2. ENCODER MODULE ====================
+	subgraph cluster_encoder {
+		label="2. Encoder (BiLSTM)" labelloc=t fontsize=11 fontname="Arial Bold"
+		style="filled,rounded" fillcolor="#FFF9C4" color="#F9A825" penwidth=2
+		
+		e_input [label="(B, T, 128)" fillcolor=white shape=plaintext fontsize=8]
+		
+		e_pack [label="Pack Padded\nSequence" fillcolor="#E1F5FE" width=1.4]
+		
+		e_lstm1 [label="BiLSTM Layer 1\n(128 → 256×2)" fillcolor="#BBDEFB" width=1.4]
+		
+		e_shape1 [label="(B, T, 512)" fillcolor=white shape=plaintext fontsize=8]
+		
+		e_lstm2 [label="BiLSTM Layer 2\n(512 → 256×2)" fillcolor="#BBDEFB" width=1.4]
+		
+		e_shape2 [label="(B, T, 512)" fillcolor=white shape=plaintext fontsize=8]
+		
+		e_unpack [label="Pad Packed\nSequence" fillcolor="#E1F5FE" width=1.4]
+		
+		e_output [label="Encoder Output\n(B, T, 512)" fillcolor="#90CAF9" width=1.4]
+		
+		e_hidden [label="Hidden State\n(h, c)" fillcolor="#64B5F6" width=1.4]
+		
+		// Vertical flow
+		e_input -> e_pack
+		e_pack -> e_lstm1
+		e_lstm1 -> e_shape1 [arrowhead=none]
+		e_shape1 -> e_lstm2
+		e_lstm2 -> e_shape2 [arrowhead=none]
+		e_shape2 -> e_unpack
+		e_unpack -> e_output
+		e_unpack -> e_hidden
+	}
+	
+	// ==================== 3. ATTENTION MODULE ====================
+	subgraph cluster_attention {
+		label="3. Coverage Attention" labelloc=t fontsize=11 fontname="Arial Bold"
+		style="filled,rounded" fillcolor="#FFF9C4" color="#F9A825" penwidth=2
+		
+		a_enc [label="Encoder Out\n(B, T, 512)" fillcolor="#E8F5E9" width=1.4]
+		
+		a_dec [label="Decoder State\n(B, 256)" fillcolor="#F3E5F5" width=1.4]
+		
+		a_cov [label="Coverage\n(B, T)" fillcolor="#FFECB3" width=1.4]
+		
+		a_Wh [label="Linear W_h\n(512, 256)" fillcolor="#C8E6C9" width=1.4]
+		
+		a_Wd [label="Linear W_d\n(256, 256)" fillcolor="#E1BEE7" width=1.4]
+		
+		a_Wc [label="Linear W_c\n(1, 256)" fillcolor="#FFE082" width=1.4]
+		
+		a_shape1 [label="(B, T, 256)" fillcolor=white shape=plaintext fontsize=8]
+		
+		a_tanh [label="Tanh" fillcolor="#DCEDC8" width=1.4]
+		
+		a_v [label="Linear v\n(256, 1)" fillcolor="#C5E1A5" width=1.4]
+		
+		a_shape2 [label="(B, T)" fillcolor=white shape=plaintext fontsize=8]
+		
+		a_softmax [label="Softmax" fillcolor="#AED581" width=1.4]
+		
+		a_attn [label="Attention α\n(B, T)" fillcolor="#8BC34A" fontcolor=white width=1.4]
+		
+		a_context [label="Context Vector\n(B, 512)" fillcolor="#689F38" fontcolor=white width=1.4]
+		
+		// Flow
+		a_enc -> a_Wh
+		a_dec -> a_Wd
+		a_cov -> a_Wc
+		{a_Wh a_Wd a_Wc} -> a_shape1 [arrowhead=none]
+		a_shape1 -> a_tanh
+		a_tanh -> a_v
+		a_v -> a_shape2 [arrowhead=none]
+		a_shape2 -> a_softmax
+		a_softmax -> a_attn
+		a_attn -> a_context [label="  α·Enc"]
+	}
+	
+	// ==================== 4. DECODER MODULE ====================
+	subgraph cluster_decoder {
+		label="4. Decoder (LSTM)" labelloc=t fontsize=11 fontname="Arial Bold"
+		style="filled,rounded" fillcolor="#FFF9C4" color="#F9A825" penwidth=2
+		
+		d_prev [label="Prev Token\n(B, 1)" fillcolor="#F3E5F5" width=1.4]
+		
+		d_embed [label="Embedding\n(16000, 128)" fillcolor="#E1BEE7" width=1.4]
+		
+		d_shape1 [label="(B, 1, 128)" fillcolor=white shape=plaintext fontsize=8]
+		
+		d_ctx [label="Context\n(B, 512)" fillcolor="#CE93D8" width=1.4]
+		
+		d_concat [label="Concat\n[Emb; Ctx]" fillcolor="#BA68C8" fontcolor=white width=1.4]
+		
+		d_shape2 [label="(B, 1, 640)" fillcolor=white shape=plaintext fontsize=8]
+		
+		d_lstm1 [label="LSTM Layer 1\n(640, 256)" fillcolor="#AB47BC" fontcolor=white width=1.4]
+		
+		d_lstm2 [label="LSTM Layer 2\n(256, 256)" fillcolor="#9C27B0" fontcolor=white width=1.4]
+		
+		d_output [label="Decoder Out\n(B, 256)" fillcolor="#7B1FA2" fontcolor=white width=1.4]
+		
+		// Flow
+		d_prev -> d_embed
+		d_embed -> d_shape1 [arrowhead=none]
+		d_shape1 -> d_concat
+		d_ctx -> d_concat
+		d_concat -> d_shape2 [arrowhead=none]
+		d_shape2 -> d_lstm1
+		d_lstm1 -> d_lstm2
+		d_lstm2 -> d_output
+	}
+	
+	// ==================== 5. OUTPUT MODULE ====================
+	subgraph cluster_output {
+		label="5. Output (Pointer-Generator)" labelloc=t fontsize=11 fontname="Arial Bold"
+		style="filled,rounded" fillcolor="#FFF9C4" color="#F9A825" penwidth=2
+		
+		o_dec [label="Dec Out\n(B, 256)" fillcolor="#FFCDD2" width=1.4]
+		
+		o_ctx [label="Context\n(B, 512)" fillcolor="#FFCDD2" width=1.4]
+		
+		o_emb [label="Embed\n(B, 128)" fillcolor="#FFCDD2" width=1.4]
+		
+		o_concat [label="Concat\n(B, 896)" fillcolor="#EF9A9A" width=1.4]
+		
+		o_vocab [label="Linear\n(896, 16000)" fillcolor="#E57373" width=1.4]
+		
+		o_pvocab [label="P_vocab\n(B, 16000)" fillcolor="#EF5350" fontcolor=white width=1.4]
+		
+		o_pgen_in [label="Linear\n(896, 1)" fillcolor="#F48FB1" width=1.4]
+		
+		o_sigmoid [label="Sigmoid" fillcolor="#F06292" width=1.4]
+		
+		o_pgen [label="p_gen\n(B, 1)" fillcolor="#EC407A" fontcolor=white width=1.4]
+		
+		o_attn [label="Attention α\n(B, T)" fillcolor="#AB47BC" fontcolor=white width=1.4]
+		
+		o_pcopy [label="P_copy\n(B, T)" fillcolor="#8E24AA" fontcolor=white width=1.4]
+		
+		o_final [label="Final Dist\np·Pvocab + (1-p)·Pcopy" fillcolor="#D32F2F" fontcolor=white width=1.8]
+		
+		o_output [label="Output (y)" shape=ellipse fillcolor="#FF9800" fontcolor=white width=1.2]
+		
+		// Flow - Vocab branch
+		{o_dec o_ctx o_emb} -> o_concat
+		o_concat -> o_vocab
+		o_vocab -> o_pvocab
+		
+		// Flow - p_gen branch
+		o_concat -> o_pgen_in
+		o_pgen_in -> o_sigmoid
+		o_sigmoid -> o_pgen
+		
+		// Flow - Copy branch
+		o_attn -> o_pcopy [label="(1-p)·α"]
+		
+		// Flow - Final
+		o_pvocab -> o_final [label="p·"]
+		o_pcopy -> o_final
+		o_pgen -> o_final [style=dashed]
+		o_final -> o_output
+	}
+	
+	// ==================== INTER-MODULE CONNECTIONS ====================
+	// Input to Encoder
+	i_shape3 -> e_input [color="#1565C0" penwidth=1.5 minlen=2]
+	
+	// Encoder to Attention
+	e_output -> a_enc [color="#2E7D32" penwidth=1.5 minlen=2]
+	
+	// Decoder to Attention
+	d_output -> a_dec [color="#6A1B9A" penwidth=1.5 constraint=false]
+	
+	// Context back to Decoder
+	a_context -> d_ctx [color="#33691E" penwidth=1.5 constraint=false]
+	
+	// Attention to Output
+	a_attn -> o_attn [color="#6A1B9A" penwidth=1.5 minlen=2]
+	
+	// Context to Output
+	a_context -> o_ctx [color="#33691E" penwidth=1.5 constraint=false]
+	
+	// Decoder to Output
+	d_output -> o_dec [color="#6A1B9A" penwidth=1.5 minlen=2]
+	
+	// Embedding to Output
+	d_embed -> o_emb [color="#6A1B9A" penwidth=1.5 constraint=false]
+	
+	// Hidden state to Decoder init
+	e_hidden -> d_lstm1 [color="#1565C0" penwidth=1.5 style=dashed label="init" constraint=false]
+}

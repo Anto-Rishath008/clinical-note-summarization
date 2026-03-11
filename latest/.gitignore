@@ -1,0 +1,16 @@
+# Large binary files (checkpoints, data)
+*.pt
+*.pth
+*.ckpt
+*.bin
+*.safetensors
+*.h5
+*.pkl
+*.parquet
+*.csv
+!shared/experiments/*.csv
+!shared/results/**/*.csv
+*.model
+*.vocab
+__pycache__/
+.venv/

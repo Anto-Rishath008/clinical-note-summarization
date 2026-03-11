@@ -1,0 +1,85 @@
+// Layer Details
+digraph {
+	dpi=150 rankdir=TB size="16,12"
+	node [fontname=Arial shape=box style="rounded,filled"]
+	subgraph cluster_mha {
+		color="#F44336" label="Multi-Head Attention (8 heads)" style=rounded
+		mha_input [label="Input
+(batch, seq, 256)" fillcolor="#E8F5E9"]
+		q_proj [label="Q Projection
+Linear(256→256)" fillcolor="#BBDEFB"]
+		k_proj [label="K Projection
+Linear(256→256)" fillcolor="#BBDEFB"]
+		v_proj [label="V Projection
+Linear(256→256)" fillcolor="#BBDEFB"]
+		split [label="Split Heads
+(batch, 8, seq, 32)" fillcolor="#F5F5F5"]
+		qk [label="Q × Kᵀ
+Scaled by √32" fillcolor="#F5F5F5"]
+		pos_bias [label="Add Position Bias
+(Relative)" fillcolor="#FFCDD2"]
+		mask [label="Apply Mask
+(Causal/Padding)" fillcolor="#FFCDD2"]
+		softmax [label=Softmax fillcolor="#F5F5F5"]
+		dropout_attn [label="Dropout(0.1)" fillcolor="#F5F5F5"]
+		attn_v [label="Attention × V" fillcolor="#F5F5F5"]
+		merge [label="Merge Heads
+(batch, seq, 256)" fillcolor="#F5F5F5"]
+		o_proj [label="Output Projection
+Linear(256→256)" fillcolor="#BBDEFB"]
+		mha_output [label="Output
+(batch, seq, 256)" fillcolor="#FFF9C4"]
+		mha_input -> q_proj
+		mha_input -> k_proj
+		mha_input -> v_proj
+		q_proj -> split
+		k_proj -> split
+		v_proj -> split
+		split -> qk
+		qk -> pos_bias
+		pos_bias -> mask
+		mask -> softmax
+		softmax -> dropout_attn
+		dropout_attn -> attn_v
+		split -> attn_v [label=V style=dashed]
+		attn_v -> merge
+		merge -> o_proj
+		o_proj -> mha_output
+	}
+	subgraph cluster_ffn {
+		color="#2196F3" label="Feed-Forward Network" style=rounded
+		ffn_input [label="Input
+(batch, seq, 256)" fillcolor="#E8F5E9"]
+		wi [label="Expand
+Linear(256→1024)" fillcolor="#BBDEFB"]
+		gelu [label="GELU
+Activation" fillcolor="#F5F5F5"]
+		dropout_ffn [label="Dropout(0.1)" fillcolor="#F5F5F5"]
+		wo [label="Contract
+Linear(1024→256)" fillcolor="#BBDEFB"]
+		ffn_output [label="Output
+(batch, seq, 256)" fillcolor="#FFF9C4"]
+		ffn_input -> wi
+		wi -> gelu
+		gelu -> dropout_ffn
+		dropout_ffn -> wo
+		wo -> ffn_output
+	}
+	subgraph cluster_rpb {
+		color="#4CAF50" label="Relative Position Bias" style=rounded
+		positions [label="Query/Key
+Positions" fillcolor="#E8F5E9"]
+		rel_pos [label="Compute Relative
+Positions" fillcolor="#F5F5F5"]
+		bucket [label="Bucket
+(32 buckets)" fillcolor="#F5F5F5"]
+		bias_emb [label="Bias Embedding
+nn.Embedding(32, 8)" fillcolor="#BBDEFB"]
+		bias_out [label="Position Bias
+(1, 8, seq, seq)" fillcolor="#FFF9C4"]
+		positions -> rel_pos
+		rel_pos -> bucket
+		bucket -> bias_emb
+		bias_emb -> bias_out
+	}
+}

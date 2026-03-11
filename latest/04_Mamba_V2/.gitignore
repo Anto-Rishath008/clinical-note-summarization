@@ -1,0 +1,52 @@
+# Data files (too large for git)
+data/*.csv
+data/*.parquet
+data/tokenized/
+
+# Checkpoints (too large for git)
+checkpoints/
+*.pt
+*.pth
+*.bin
+
+# Outputs
+outputs/
+logs/
+saved_models/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Jupyter notebooks
+*.ipynb
+.ipynb_checkpoints/
+
+# Kaggle files (NEVER track these)
+kaggle.json
+**/kaggle.json
+dataset-metadata.json
+kernel-metadata.json
+**/dataset-metadata.json
+**/kernel-metadata.json
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Runtime artifacts (not for version control)
+run_artifacts/
+eval_results/
+eval_subsets/
+
+# Data tokenizer cache
+data/tokenizer/
+
+# eval outputs
+outputs/

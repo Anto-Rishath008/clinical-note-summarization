@@ -1,0 +1,92 @@
+# V2 Full Dataset Training Configuration
+# ========================================
+# Improved architecture with Mamba-2, RetNet, and LLaMA/PaLM innovations.
+# All V2 features enabled for maximum clinical summarization quality.
+# Fresh training from scratch on the complete MIMIC-IV-BHC dataset (~270K samples)
+#
+# V2 changes vs baseline:
+#   - RMSNorm (from Mamba-2/LLaMA): faster, more stable normalization
+#   - SwiGLU FFN (from LLaMA/PaLM): gated activation replaces GELU
+#   - Bidirectional Mamba (from Mamba-2): forward+backward SSM with gated fusion
+#   - Cross-chunk memory attention (RetNet-inspired): memory tokens interact across chunks
+#   - Gated cross-attention (RetNet retention): learned gates in decoder
+#   - 32 memory tokens per chunk (from exp_memory32 findings)
+#
+# Target: 150,000 steps to reach ROUGE-L 0.40+
+#
+# V3 changes:
+#   - Source bypass (stride=8): decoder gets direct access to downsampled source
+#   - Copy mechanism (pointer-generator): model can copy source tokens directly
+#   - Higher learning rate (1e-4): 2x faster convergence for from-scratch training
+#   - Less eval/save overhead: eval every 5000, save every 5000
+#   - Longer training: 150K steps for 10+ epochs
+
+model:
+  vocab_size: 16000
+  d_model: 512
+  n_mamba_layers: 6
+  n_decoder_layers: 6
+  n_heads: 8
+  d_ff: 2048
+  dropout: 0.05
+  max_src_len: 2048                     # reduced from 4096 — 95%+ notes fit, ~1.5x faster
+  max_tgt_len: 512
+  chunk_size: 256
+  stride: 256                        # no overlap (faster: 8 chunks vs 16)
+  n_memory_tokens: 32            # 32 memory tokens (proven from exp_memory32)
+  mamba_d_state: 16
+  mamba_d_conv: 4
+  mamba_expand: 2
+  pad_id: 3
+  bos_id: 1
+  eos_id: 2
+  label_smoothing: 0.0              # removed — label smoothing suppresses generation sharpness
+
+  # V2 improvements — all enabled
+  use_rmsnorm: true              # RMSNorm instead of LayerNorm
+  use_swiglu: true               # SwiGLU FFN instead of GELU
+  use_bidirectional_mamba: true   # Bidirectional Mamba encoding
+  use_cross_chunk_attn: true     # Cross-chunk memory attention
+  use_gated_cross_attn: true     # Gated cross-attention in decoder
+  n_cross_chunk_layers: 2        # 2 cross-chunk attention layers
+
+  # V3 improvements — source grounding
+  source_bypass_stride: 8        # Downsample stride for source bypass
+  use_copy_mechanism: false     # Disabled for speed (re-enable for fine-tuning later)
+
+data:
+  csv_path: data/mimic-iv-bhc.csv
+  tokenizer_path: data/tokenizer/spm.model
+  max_src_len: 2048
+  max_tgt_len: 512
+  pad_id: 3
+  bos_id: 1
+  eos_id: 2
+  source_col: input
+  target_col: target
+
+training:
+  output_dir: outputs/v2_run
+  checkpoint_dir: checkpoints/v2_run
+  log_dir: logs/v2_run
+
+  # Batch settings (RTX 4070 8GB VRAM) — SPEED MODE
+  batch_size: 6                              # 3x original, ~4.2GB VRAM (safe for 8.6GB GPU)
+  gradient_accumulation_steps: 1             # no accumulation = 1 fwd/bwd per step
+  # Effective batch size: 6 (6 × 1) — ~2.7x fewer batches per step vs old config
+
+  max_steps: 150000                          # extended for ROUGE-L 0.40+ target
+  warmup_steps: 200                          # reduced from 500 — already warm from checkpoint
+
+  learning_rate: 1.0e-4              # 2x higher for from-scratch training
+  weight_decay: 0.03
+  max_grad_norm: 1.0
+  label_smoothing: 0.0               # removed — label smoothing hurts generation quality
+  num_lr_restarts: 2                  # cosine warm restarts to escape plateaus
+
+  eval_steps: 5000                           # reduced overhead for speed
+  save_steps: 5000                           # reduced overhead for speed
+  log_steps: 50
+
+  use_amp: true
+  seed: 42

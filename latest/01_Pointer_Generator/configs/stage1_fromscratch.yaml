@@ -1,0 +1,75 @@
+# Stage 1: From-Scratch Training Configuration
+# Optimized for RTX 4070 12GB VRAM
+# Goal: Beat Lead-150 baseline on ROUGE-L
+
+# Model Architecture (smaller for faster iteration)
+model:
+  emb_dim: 256                  # Word embedding dimension
+  hidden_dim: 512              # LSTM hidden dimension
+  num_layers: 2                # Number of LSTM layers
+  dropout: 0.3                 # Dropout rate
+  chunk_len: 256               # Tokens per chunk (reduced for memory)
+  num_chunks: 8                # Number of chunks to process (max input = 2048)
+  max_target_len: 256          # Start with shorter targets, increase after stable
+  coverage_lambda: 0.1         # Coverage loss weight (MUCH lower to not dominate early training)
+  pointer_gen: true            # Enable pointer-generator mechanism
+  use_coverage: true           # Enable coverage mechanism
+  bidirectional: true          # Use bidirectional LSTM for encoder
+
+# Training (disciplined approach for from-scratch)
+training:
+  batch_size: 2                # Batch size per GPU
+  grad_accum: 8                # Gradient accumulation (effective batch = 16)
+  learning_rate: 0.0003        # 3e-4 for from-scratch
+  max_steps: 30000             # Long training for from-scratch
+  warmup_steps: 1000           # Learning rate warmup
+  fp16: true                   # Mixed precision training
+  clip_grad: 1.0               # Gradient clipping norm
+  save_every: 500              # Save checkpoint every 500 steps
+  eval_every: 1000             # Evaluate every 1000 steps
+  log_every: 50                # Log training metrics every 50 steps
+  patience: 10                 # Early stopping patience (evals without improvement)
+  seed: 42                     # Random seed
+
+# Optimizer
+optimizer:
+  type: adam                   # Adam optimizer
+  betas: [0.9, 0.999]          # Adam beta parameters
+  eps: 1.0e-8                  # Adam epsilon
+  weight_decay: 0.0001         # L2 regularization
+
+# Learning Rate Scheduler
+scheduler:
+  type: linear_warmup_decay    # Linear warmup + decay
+  decay_steps: 29000           # Decay after warmup (total - warmup)
+
+# Decoding
+decoding:
+  beam_size: 4                 # Beam search beam size
+  min_length: 30               # Minimum generation length
+  max_length: 256              # Maximum generation length (matches training)
+  length_penalty: 1.0          # Length penalty factor
+  no_repeat_ngram: 3           # Block trigram repetition
+
+# Data paths
+paths:
+  train_data: 'data/tokenized/train.parquet'
+  val_data: 'data/tokenized/val.parquet'
+  tokenizer_dir: 'artifacts/tokenizer'
+  checkpoint_dir: 'artifacts/checkpoints/stage1_fromscratch'
+  log_dir: 'artifacts/logs/stage1_fromscratch'
+
+# Data preprocessing
+data:
+  vocab_size: 16000            # SentencePiece vocabulary size
+  unk_id: 0                    # Unknown token ID
+  bos_id: 1                    # Begin-of-sequence token ID
+  eos_id: 2                    # End-of-sequence token ID
+  pad_id: 3                    # Padding token ID
+
+# Evaluation
+evaluation:
+  max_eval_samples: 500        # Evaluate on 500 validation samples
+  lead_n: 150                  # Lead-150 baseline for comparison
+  save_examples: true          # Save example predictions
+  num_examples: 20             # Number of examples to save

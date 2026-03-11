@@ -1,0 +1,58 @@
+# Local Training Configuration
+# Mamba-Transformer Hybrid Model for Clinical Summarization
+
+model:
+  # IMPORTANT: Match tokenizer vocab size (16000, not 32000)
+  vocab_size: 16000
+  d_model: 512
+  n_mamba_layers: 6
+  n_decoder_layers: 6
+  n_heads: 8
+  d_ff: 2048
+  dropout: 0.1
+  max_src_len: 4096
+  max_tgt_len: 512
+  chunk_size: 256
+  stride: 192
+  n_memory_tokens: 8
+  mamba_d_state: 16
+  mamba_d_conv: 4
+  mamba_expand: 2
+  pad_id: 3
+  bos_id: 1
+  eos_id: 2
+  label_smoothing: 0.1
+
+data:
+  csv_path: workspace_mamba_longt5_v1/data/mimic-iv-bhc.csv
+  tokenizer_path: workspace_mamba_longt5_v1/data/tokenizer/spm.model
+  max_src_len: 4096
+  max_tgt_len: 512
+  pad_id: 3
+  bos_id: 1
+  eos_id: 2
+  source_col: input
+  target_col: target
+
+training:
+  output_dir: workspace_mamba_longt5_v1/outputs/local_run
+  checkpoint_dir: workspace_mamba_longt5_v1/checkpoints/local_run
+  log_dir: workspace_mamba_longt5_v1/logs/local_run
+  # Stable batch size for 8GB VRAM (RTX 4070) - handles variable seq lengths
+  batch_size: 4
+  gradient_accumulation_steps: 4
+  # Sanity run: 200 steps, Full run: 10000 steps
+  max_steps: 200
+  warmup_steps: 50
+  # Lower LR to prevent NaN (was 5e-4, reduced for stability)
+  learning_rate: 1.0e-4
+  weight_decay: 0.01
+  max_grad_norm: 1.0
+  label_smoothing: 0.1
+  # Evaluation and checkpointing
+  eval_steps: 50
+  save_steps: 50
+  log_steps: 10
+  # Mixed precision (AMP fp16)
+  use_amp: true
+  seed: 42
