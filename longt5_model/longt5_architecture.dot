@@ -1,0 +1,76 @@
+// Simplified LongT5 Architecture (16:4 Landscape)
+digraph {
+	graph [dpi=150 rankdir=LR ratio=0.25 size="16,4" bgcolor=white splines=ortho]
+	node [fontname="Arial" fontsize=9 shape=box style="rounded,filled" height=0.35 width=1.4]
+	edge [arrowsize=0.6]
+	
+	// ========== INPUT MODULE ==========
+	subgraph cluster_input {
+		label="Input" labelloc=t fontsize=11 fontname="Arial Bold"
+		style=filled fillcolor="#E8F5E9" color="#388E3C" penwidth=1.5
+		
+		in1 [label="Clinical Note" fillcolor="#C8E6C9"]
+		in2 [label="Tokenizer\n(vocab=16000)" fillcolor="#A5D6A7"]
+		in3 [label="Embedding\n(B, T, 256)" fillcolor="#81C784"]
+		
+		in1 -> in2 -> in3
+	}
+	
+	// ========== ENCODER MODULE ==========
+	subgraph cluster_encoder {
+		label="Encoder (×4)" labelloc=t fontsize=11 fontname="Arial Bold"
+		style=filled fillcolor="#FFF3E0" color="#E65100" penwidth=1.5
+		
+		e1 [label="LayerNorm" fillcolor="#FFE0B2"]
+		e2 [label="Local-Global Attn\n(8 heads, d=32)" fillcolor="#FFCC80"]
+		e3 [label="Dropout + Add" fillcolor="#FFB74D"]
+		e4 [label="LayerNorm" fillcolor="#FFE0B2"]
+		e5 [label="FFN\n(256→1024→256)" fillcolor="#FFA726"]
+		e6 [label="Dropout + Add\n(B, T, 256)" fillcolor="#FB8C00" fontcolor=white]
+		
+		e1 -> e2 -> e3 -> e4 -> e5 -> e6
+		e1 -> e3 [style=dashed color="#757575" constraint=false]
+		e4 -> e6 [style=dashed color="#757575" constraint=false]
+	}
+	
+	// ========== DECODER MODULE ==========
+	subgraph cluster_decoder {
+		label="Decoder (×4)" labelloc=t fontsize=11 fontname="Arial Bold"
+		style=filled fillcolor="#F3E5F5" color="#7B1FA2" penwidth=1.5
+		
+		d1 [label="LayerNorm" fillcolor="#E1BEE7"]
+		d2 [label="Causal Self-Attn\n(8 heads, d=32)" fillcolor="#CE93D8"]
+		d3 [label="Dropout + Add" fillcolor="#BA68C8"]
+		d4 [label="LayerNorm" fillcolor="#E1BEE7"]
+		d5 [label="Cross-Attention\n(Q:Dec, K/V:Enc)" fillcolor="#AB47BC" fontcolor=white]
+		d6 [label="Dropout + Add" fillcolor="#BA68C8"]
+		d7 [label="LayerNorm" fillcolor="#E1BEE7"]
+		d8 [label="FFN\n(256→1024→256)" fillcolor="#9C27B0" fontcolor=white]
+		d9 [label="Dropout + Add\n(B, S, 256)" fillcolor="#7B1FA2" fontcolor=white]
+		
+		d1 -> d2 -> d3 -> d4 -> d5 -> d6 -> d7 -> d8 -> d9
+		d1 -> d3 [style=dashed color="#757575" constraint=false]
+		d4 -> d6 [style=dashed color="#757575" constraint=false]
+		d7 -> d9 [style=dashed color="#757575" constraint=false]
+	}
+	
+	// ========== OUTPUT MODULE ==========
+	subgraph cluster_output {
+		label="Output" labelloc=t fontsize=11 fontname="Arial Bold"
+		style=filled fillcolor="#E3F2FD" color="#1565C0" penwidth=1.5
+		
+		o1 [label="LayerNorm" fillcolor="#BBDEFB"]
+		o2 [label="LM Head\n(256→16000)" fillcolor="#90CAF9"]
+		o3 [label="Softmax" fillcolor="#64B5F6"]
+		o4 [label="Output Tokens" fillcolor="#2196F3" fontcolor=white]
+		
+		o1 -> o2 -> o3 -> o4
+	}
+	
+	// ========== CONNECTIONS ==========
+	in3 -> e1 [penwidth=1.5 color="#388E3C"]
+	e6 -> d1 [penwidth=1.5 color="#E65100" style=invis]
+	e6 -> d5 [penwidth=1.5 color="#E65100" label="K,V" fontsize=8]
+	in3 -> d1 [penwidth=1.5 color="#7B1FA2" style=dashed label="Target" fontsize=8]
+	d9 -> o1 [penwidth=1.5 color="#7B1FA2"]
+}

@@ -1,0 +1,70 @@
+# Full Training Configuration - Final Run
+# Optimized for RTX 4070 8GB, from-scratch pointer-generator network
+
+# Model Architecture
+model:
+  emb_dim: 128
+  hidden_dim: 256
+  num_layers: 2
+  dropout: 0.3
+  chunk_len: 128
+  num_chunks: 6                # max input = 768 tokens
+  max_target_len: 192
+  coverage_lambda: 0.0         # Coverage disabled for initial training
+  pointer_gen: true            # Enable pointer-generator
+  use_coverage: false          # Enable after model learns basic patterns
+  bidirectional: true
+
+# Training
+training:
+  batch_size: 2                # Small batch for 8GB VRAM
+  grad_accum: 8                # Effective batch = 16
+  learning_rate: 0.0003        # 3e-4, good for from-scratch training
+  max_steps: 10000             # 10k steps for full training
+  warmup_steps: 500            # 500 step warmup
+  fp16: true                   # Mixed precision
+  clip_grad: 1.0
+  save_every: 500              # Save every 500 steps
+  eval_every: 500              # Evaluate ROUGE every 500 steps
+  log_every: 50                # Print loss every 50 steps
+  patience: 15                 # Early stopping patience
+  seed: 42
+  label_smoothing: 0.0         # No label smoothing for pointer-gen
+
+# Optimizer
+optimizer:
+  type: adam
+  betas: [0.9, 0.999]
+  eps: 1.0e-8
+  weight_decay: 0.0001
+
+# Learning Rate Scheduler
+scheduler:
+  type: linear_warmup_decay
+  decay_steps: 9500            # Total - warmup
+
+# Decoding
+decoding:
+  beam_size: 4
+  min_length: 50
+  max_length: 192
+  length_penalty: 1.0
+  no_repeat_ngram: 3
+  block_trigrams: true
+
+# Data
+data:
+  train_split: 0.9
+  val_split: 0.1
+  vocab_size: 16000
+  unk_id: 0
+  bos_id: 1
+  eos_id: 2
+  pad_id: 3
+
+# Paths
+paths:
+  tokenizer_dir: artifacts/tokenizer
+  checkpoint_dir: artifacts/checkpoints
+  log_dir: artifacts/logs
+  predictions_dir: artifacts/predictions

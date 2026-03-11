@@ -1,0 +1,347 @@
+// Pointer-Generator Network Architecture
+// Clinical Note Summarization Model
+// For Graphviz Online - Landscape Layout
+
+digraph PointerGeneratorNetwork {
+    // Global settings
+    rankdir=LR;
+    splines=ortho;
+    nodesep=0.6;
+    ranksep=1.2;
+    bgcolor="#FFFFFF";
+    fontname="Arial";
+    
+    // Node defaults
+    node [shape=box, style="filled,rounded", fontname="Arial", fontsize=11, margin="0.2,0.1"];
+    edge [fontname="Arial", fontsize=9, arrowsize=0.7];
+    
+    // ========================================================================
+    // COLUMN 1: INPUT PROCESSING
+    // ========================================================================
+    subgraph cluster_input {
+        label="1. Input Processing";
+        labelloc=t;
+        labeljust=l;
+        fontsize=14;
+        fontname="Arial Bold";
+        style="filled,rounded";
+        fillcolor="#FFF8DC";
+        color="#DAA520";
+        penwidth=2;
+        margin=20;
+        
+        // Input node
+        input_src [label="Source Input\n(Clinical Notes)", shape=ellipse, fillcolor="#87CEEB", color="#4682B4", penwidth=2];
+        
+        // Source dimensions
+        src_dim1 [label="(B, src_len)", shape=plaintext, fillcolor="#FFF8DC"];
+        
+        // Embedding Layer
+        src_embed [label="Embedding\n(16000, 128)", fillcolor="#E6E6FA", color="#9370DB"];
+        
+        src_dim2 [label="(B, src_len, 128)", shape=plaintext, fillcolor="#FFF8DC"];
+        
+        // Dropout
+        src_dropout [label="Dropout\n(p=0.3)", fillcolor="#FFE4E1", color="#CD5C5C"];
+        
+        src_dim3 [label="(B, src_len, 128)", shape=plaintext, fillcolor="#FFF8DC"];
+        
+        // Target input branch
+        input_tgt [label="Target Input\n(Summary)", shape=ellipse, fillcolor="#98FB98", color="#228B22", penwidth=2];
+        
+        tgt_dim1 [label="(B, tgt_len)", shape=plaintext, fillcolor="#FFF8DC"];
+        
+        tgt_embed [label="Embedding\n(16000, 128)", fillcolor="#E6E6FA", color="#9370DB"];
+        
+        tgt_dim2 [label="(B, 1, 128)", shape=plaintext, fillcolor="#FFF8DC"];
+        
+        // Connections within input
+        input_src -> src_dim1 [style=invis];
+        src_dim1 -> src_embed [arrowhead=none];
+        src_embed -> src_dim2 [arrowhead=none];
+        src_dim2 -> src_dropout [arrowhead=none];
+        src_dropout -> src_dim3 [arrowhead=none];
+        
+        input_tgt -> tgt_dim1 [style=invis];
+        tgt_dim1 -> tgt_embed [arrowhead=none];
+        tgt_embed -> tgt_dim2 [arrowhead=none];
+    }
+    
+    // ========================================================================
+    // COLUMN 2: ENCODER (Bidirectional LSTM)
+    // ========================================================================
+    subgraph cluster_encoder {
+        label="2. Encoder (BiLSTM)";
+        labelloc=t;
+        labeljust=l;
+        fontsize=14;
+        fontname="Arial Bold";
+        style="filled,rounded";
+        fillcolor="#E6F3FF";
+        color="#4169E1";
+        penwidth=2;
+        margin=20;
+        
+        enc_dim1 [label="(B, src_len, 128)", shape=plaintext, fillcolor="#E6F3FF"];
+        
+        // Pack sequence
+        enc_pack [label="Pack Padded\nSequence", fillcolor="#B0C4DE", color="#4169E1"];
+        
+        // LSTM Layer 1
+        enc_lstm1 [label="BiLSTM Layer 1\n(128 → 256×2)", fillcolor="#ADD8E6", color="#4169E1"];
+        
+        enc_dim2 [label="(B, src_len, 512)", shape=plaintext, fillcolor="#E6F3FF"];
+        
+        // LSTM Layer 2
+        enc_lstm2 [label="BiLSTM Layer 2\n(512 → 256×2)", fillcolor="#ADD8E6", color="#4169E1"];
+        
+        enc_dim3 [label="(B, src_len, 512)", shape=plaintext, fillcolor="#E6F3FF"];
+        
+        // Unpack sequence
+        enc_unpack [label="Pad Packed\nSequence", fillcolor="#B0C4DE", color="#4169E1"];
+        
+        enc_dim4 [label="(B, src_len, 512)", shape=plaintext, fillcolor="#E6F3FF"];
+        
+        // Hidden state
+        enc_hidden [label="Hidden State\n(h, c)", fillcolor="#87CEFA", color="#4169E1"];
+        
+        enc_h_dim [label="h: (2, B, 256)\nc: (2, B, 256)", shape=plaintext, fillcolor="#E6F3FF"];
+        
+        // Encoder outputs
+        enc_outputs [label="Encoder\nOutputs", fillcolor="#87CEFA", color="#4169E1"];
+        
+        enc_out_dim [label="(B, src_len, 512)", shape=plaintext, fillcolor="#E6F3FF"];
+        
+        // Connections
+        enc_dim1 -> enc_pack [arrowhead=none];
+        enc_pack -> enc_lstm1;
+        enc_lstm1 -> enc_dim2 [arrowhead=none];
+        enc_dim2 -> enc_lstm2 [arrowhead=none];
+        enc_lstm2 -> enc_dim3 [arrowhead=none];
+        enc_dim3 -> enc_unpack [arrowhead=none];
+        enc_unpack -> enc_dim4 [arrowhead=none];
+        enc_dim4 -> enc_hidden [arrowhead=none];
+        enc_hidden -> enc_h_dim [arrowhead=none];
+        enc_dim4 -> enc_outputs [arrowhead=none];
+        enc_outputs -> enc_out_dim [arrowhead=none];
+    }
+    
+    // ========================================================================
+    // COLUMN 3: DECODER (LSTM with Attention)
+    // ========================================================================
+    subgraph cluster_decoder {
+        label="3. Decoder (LSTM + Attention)";
+        labelloc=t;
+        labeljust=l;
+        fontsize=14;
+        fontname="Arial Bold";
+        style="filled,rounded";
+        fillcolor="#FFF0F5";
+        color="#DB7093";
+        penwidth=2;
+        margin=20;
+        
+        // Input concatenation
+        dec_concat1 [label="Concat\n[embed, context]", fillcolor="#FFB6C1", color="#DB7093"];
+        
+        dec_dim1 [label="(B, 1, 640)", shape=plaintext, fillcolor="#FFF0F5"];
+        
+        // LSTM Layer 1
+        dec_lstm1 [label="LSTM Layer 1\n(640 → 256)", fillcolor="#DDA0DD", color="#9932CC"];
+        
+        dec_dim2 [label="(B, 1, 256)", shape=plaintext, fillcolor="#FFF0F5"];
+        
+        // LSTM Layer 2
+        dec_lstm2 [label="LSTM Layer 2\n(256 → 256)", fillcolor="#DDA0DD", color="#9932CC"];
+        
+        dec_dim3 [label="(B, 256)", shape=plaintext, fillcolor="#FFF0F5"];
+        
+        // Attention Module
+        subgraph cluster_attention {
+            label="Additive Attention";
+            labelloc=t;
+            fontsize=11;
+            style="filled,rounded";
+            fillcolor="#FFFACD";
+            color="#FFD700";
+            penwidth=1.5;
+            margin=15;
+            
+            attn_wh [label="W_h Linear\n(512, 256)", fillcolor="#FAFAD2", color="#DAA520"];
+            
+            attn_wd [label="W_d Linear\n(256, 256)", fillcolor="#FAFAD2", color="#DAA520"];
+            
+            attn_tanh [label="Tanh", fillcolor="#F0E68C", color="#BDB76B"];
+            
+            attn_v [label="v Linear\n(256, 1)", fillcolor="#FAFAD2", color="#DAA520"];
+            
+            attn_softmax [label="Softmax", fillcolor="#F0E68C", color="#BDB76B"];
+            
+            attn_dim [label="(B, src_len)", shape=plaintext, fillcolor="#FFFACD"];
+            
+            attn_bmm [label="BMM\n(Weighted Sum)", fillcolor="#FAFAD2", color="#DAA520"];
+            
+            context_dim [label="(B, 512)", shape=plaintext, fillcolor="#FFFACD"];
+        }
+        
+        // Connections within attention
+        attn_wh -> attn_tanh;
+        attn_wd -> attn_tanh;
+        attn_tanh -> attn_v;
+        attn_v -> attn_softmax;
+        attn_softmax -> attn_dim [arrowhead=none];
+        attn_dim -> attn_bmm [arrowhead=none];
+        attn_bmm -> context_dim [arrowhead=none];
+        
+        // Decoder connections
+        dec_concat1 -> dec_dim1 [arrowhead=none];
+        dec_dim1 -> dec_lstm1 [arrowhead=none];
+        dec_lstm1 -> dec_dim2 [arrowhead=none];
+        dec_dim2 -> dec_lstm2 [arrowhead=none];
+        dec_lstm2 -> dec_dim3 [arrowhead=none];
+    }
+    
+    // ========================================================================
+    // COLUMN 4: OUTPUT (Pointer-Generator)
+    // ========================================================================
+    subgraph cluster_output {
+        label="4. Output (Pointer-Generator)";
+        labelloc=t;
+        labeljust=l;
+        fontsize=14;
+        fontname="Arial Bold";
+        style="filled,rounded";
+        fillcolor="#F0FFF0";
+        color="#228B22";
+        penwidth=2;
+        margin=20;
+        
+        // Output projection input
+        out_concat [label="Concat\n[lstm, context, embed]", fillcolor="#90EE90", color="#228B22"];
+        
+        out_dim1 [label="(B, 896)", shape=plaintext, fillcolor="#F0FFF0"];
+        
+        // Vocabulary projection
+        out_proj [label="Linear\n(896, 16000)", fillcolor="#98FB98", color="#2E8B57"];
+        
+        out_dim2 [label="(B, 16000)", shape=plaintext, fillcolor="#F0FFF0"];
+        
+        // Vocab distribution
+        vocab_softmax [label="Softmax", fillcolor="#90EE90", color="#228B22"];
+        
+        vocab_dist [label="P_vocab\n(Vocab Dist)", fillcolor="#7CFC00", color="#006400"];
+        
+        vocab_dim [label="(B, 16000)", shape=plaintext, fillcolor="#F0FFF0"];
+        
+        // Pointer-Generator Switch
+        pgen_linear [label="P_gen Linear\n(896, 1)", fillcolor="#FFD700", color="#B8860B"];
+        
+        pgen_sigmoid [label="Sigmoid", fillcolor="#FFE4B5", color="#DAA520"];
+        
+        pgen_val [label="p_gen\n(Switch)", fillcolor="#FAFAD2", color="#B8860B"];
+        
+        pgen_dim [label="(B, 1)", shape=plaintext, fillcolor="#F0FFF0"];
+        
+        // Copy distribution
+        copy_dist [label="P_copy\n(Attention Dist)", fillcolor="#87CEEB", color="#4682B4"];
+        
+        copy_dim [label="(B, src_len)", shape=plaintext, fillcolor="#F0FFF0"];
+        
+        // Final mixing
+        mix_node [label="Final Distribution\np_gen × P_vocab +\n(1-p_gen) × P_copy", fillcolor="#32CD32", color="#006400", penwidth=2];
+        
+        mix_dim [label="(B, vocab_size)", shape=plaintext, fillcolor="#F0FFF0"];
+        
+        // Output token
+        output_token [label="Output Token", shape=ellipse, fillcolor="#FFA500", color="#FF8C00", penwidth=2];
+        
+        // Connections
+        out_concat -> out_dim1 [arrowhead=none];
+        out_dim1 -> out_proj [arrowhead=none];
+        out_proj -> out_dim2 [arrowhead=none];
+        out_dim2 -> vocab_softmax [arrowhead=none];
+        vocab_softmax -> vocab_dist;
+        vocab_dist -> vocab_dim [arrowhead=none];
+        
+        out_dim1 -> pgen_linear [arrowhead=none];
+        pgen_linear -> pgen_sigmoid;
+        pgen_sigmoid -> pgen_val;
+        pgen_val -> pgen_dim [arrowhead=none];
+        
+        copy_dist -> copy_dim [arrowhead=none];
+        
+        vocab_dim -> mix_node [arrowhead=none];
+        pgen_dim -> mix_node [arrowhead=none];
+        copy_dim -> mix_node [arrowhead=none];
+        
+        mix_node -> mix_dim [arrowhead=none];
+        mix_dim -> output_token [arrowhead=none];
+    }
+    
+    // ========================================================================
+    // INTER-COLUMN CONNECTIONS
+    // ========================================================================
+    
+    // Input to Encoder
+    src_dim3 -> enc_dim1 [constraint=true, minlen=2];
+    
+    // Encoder to Decoder (hidden state bridge)
+    enc_h_dim -> dec_lstm1 [label="  Bridge\n  (forward only)", style=dashed, color="#4169E1"];
+    
+    // Encoder outputs to Attention
+    enc_out_dim -> attn_wh [label="  Encoder\n  Outputs", color="#4169E1"];
+    
+    // Decoder hidden to Attention
+    dec_dim3 -> attn_wd [label="  Decoder\n  State", color="#9932CC"];
+    
+    // Context back to decoder (for next step)
+    context_dim -> out_concat [label="  Context"];
+    
+    // Target embedding to decoder
+    tgt_dim2 -> dec_concat1 [label="  Target\n  Embed", color="#228B22"];
+    
+    // Attention weights to copy distribution
+    attn_dim -> copy_dist [label="  Attention\n  Weights", style=dashed, color="#FFD700"];
+    
+    // Decoder output to output concat
+    dec_dim3 -> out_concat [label="  LSTM\n  Output", color="#9932CC"];
+    
+    // Target embed to output concat
+    tgt_dim2 -> out_concat [label="  Embed", style=dashed, color="#228B22"];
+    
+    // ========================================================================
+    // LEGEND
+    // ========================================================================
+    subgraph cluster_legend {
+        label="Legend";
+        labelloc=t;
+        fontsize=12;
+        style="filled,rounded";
+        fillcolor="#F5F5F5";
+        color="#808080";
+        margin=15;
+        
+        leg_input [label="Input/Output", shape=ellipse, fillcolor="#87CEEB", color="#4682B4"];
+        leg_linear [label="Linear Layer", fillcolor="#E6E6FA", color="#9370DB"];
+        leg_lstm [label="LSTM Layer", fillcolor="#ADD8E6", color="#4169E1"];
+        leg_activation [label="Activation", fillcolor="#F0E68C", color="#BDB76B"];
+        leg_dim [label="(B, T, D)\nDimensions", shape=plaintext, fillcolor="#F5F5F5"];
+        
+        leg_input -> leg_linear -> leg_lstm -> leg_activation [style=invis];
+    }
+    
+    // ========================================================================
+    // CONFIGURATION INFO
+    // ========================================================================
+    subgraph cluster_config {
+        label="Model Configuration";
+        labelloc=t;
+        fontsize=12;
+        style="filled,rounded";
+        fillcolor="#F0F0F0";
+        color="#696969";
+        margin=15;
+        
+        config_info [label="Vocab Size: 16,000\nEmbed Dim: 128\nHidden Dim: 256\nEncoder Dim: 512 (BiLSTM)\nLSTM Layers: 2\nDropout: 0.3\nMax Source: 768 tokens\nMax Target: 192 tokens", shape=box, fillcolor="#FFFFFF", color="#696969", fontsize=10];
+    }
+}
