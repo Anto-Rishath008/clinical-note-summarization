@@ -1,0 +1,25 @@
+Using device: cuda
+
+============================================================
+GPU Available: NVIDIA GeForce RTX 4070 Laptop GPU
+CUDA Version: 12.1
+GPU Memory: 8.59 GB
+============================================================
+
+Loading tokenizer from artifacts\tokenizer\spm.model...
+Creating dataloaders...
+Loaded 4000 examples from data\tokenized\train.parquet
+Loaded 500 examples from data\tokenized\val.parquet
+Train batches: 2000
+Val batches: 250
+Creating model...
+Total parameters: 22,459,137
+Trainable parameters: 22,459,137
+
+============================================================
+Starting Training
+============================================================
+Expected random loss (log vocab): 9.6803
+
+Epoch 1
+Step 50/10000 | Loss: 7.9134 | Grad: 0.0623 | LR: 0.000029

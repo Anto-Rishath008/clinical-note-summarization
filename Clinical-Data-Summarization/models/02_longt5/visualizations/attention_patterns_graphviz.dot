@@ -1,0 +1,50 @@
+// Local-Global Attention Pattern
+digraph {
+	dpi=150 rankdir=LR size="14,6"
+	node [fontname=Arial fontsize=10 shape=box style=filled]
+	subgraph cluster_tokens {
+		label="Sequence Tokens (showing 16 of 4096)" style=rounded
+		t0 [label=G0 fillcolor="#FFCDD2"]
+		t1 [label=T1 fillcolor="#E3F2FD"]
+		t2 [label=T2 fillcolor="#E3F2FD"]
+		t3 [label=T3 fillcolor="#E3F2FD"]
+		t4 [label=G4 fillcolor="#FFCDD2"]
+		t5 [label=T5 fillcolor="#E3F2FD"]
+		t6 [label=T6 fillcolor="#E3F2FD"]
+		t7 [label=T7 fillcolor="#E3F2FD"]
+		t8 [label=G8 fillcolor="#FFCDD2"]
+		t9 [label=T9 fillcolor="#E3F2FD"]
+		t10 [label=T10 fillcolor="#E3F2FD"]
+		t11 [label=T11 fillcolor="#E3F2FD"]
+		t12 [label=G12 fillcolor="#FFCDD2"]
+		t13 [label=T13 fillcolor="#E3F2FD"]
+		t14 [label=T14 fillcolor="#E3F2FD"]
+		t15 [label=T15 fillcolor="#E3F2FD"]
+	}
+	subgraph cluster_attention {
+		label="Attention Pattern (Local Radius=2)" style=rounded
+		pattern [label="
+┌───┬───┬───┬───┬───┬───┬───┬───┐
+│ G │ L │ L │ L │ G │ L │ L │ L │
+├───┼───┼───┼───┼───┼───┼───┼───┤
+│ ■ │ ■ │ ■ │ ○ │ ■ │ ○ │ ○ │ ○ │ T0 (Global)
+│ ■ │ ■ │ ■ │ ■ │ ■ │ ○ │ ○ │ ○ │ T1
+│ ■ │ ■ │ ■ │ ■ │ ■ │ ○ │ ○ │ ○ │ T2
+│ ○ │ ■ │ ■ │ ■ │ ■ │ ○ │ ○ │ ○ │ T3
+│ ■ │ ■ │ ■ │ ■ │ ■ │ ■ │ ■ │ ○ │ T4 (Global)
+│ ○ │ ○ │ ○ │ ■ │ ■ │ ■ │ ■ │ ■ │ T5
+│ ○ │ ○ │ ○ │ ○ │ ■ │ ■ │ ■ │ ■ │ T6
+│ ○ │ ○ │ ○ │ ○ │ ■ │ ■ │ ■ │ ■ │ T7
+└───┴───┴───┴───┴───┴───┴───┴───┘
+■ = Attends   ○ = Masked
+G = Global    L = Local
+" fontname=Courier shape=plaintext]
+	}
+	subgraph cluster_legend {
+		label=Legend style=rounded
+		global_tok [label="Global Token
+(attends to ALL)" fillcolor="#FFCDD2"]
+		local_tok [label="Local Token
+(attends to window)" fillcolor="#E3F2FD"]
+	}
+}

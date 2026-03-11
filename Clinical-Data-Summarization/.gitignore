@@ -1,0 +1,69 @@
+# ============================================================================
+# Clinical Data Summarization — .gitignore
+# ============================================================================
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual environments
+.venv/
+venv/
+.conda/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Jupyter
+.ipynb_checkpoints/
+
+# ============================================================================
+# Model Checkpoints (large binary files — too large for GitHub)
+# ============================================================================
+*.pt
+*.pth
+*.ckpt
+*.bin
+*.safetensors
+*.h5
+*.pkl
+
+# ============================================================================
+# Data Files (protected PHI / large binary)
+# ============================================================================
+# Raw MIMIC dataset (requires PhysioNet credentials — NEVER commit)
+data/raw/*.csv
+data/tokenized/*.parquet
+data/tokenized/*.csv
+# Tokenizer models (binary)
+data/tokenizer/*.model
+data/tokenizer/*.vocab
+
+# ============================================================================
+# Logs & Temporary Files
+# ============================================================================
+*.log
+*.tmp
+*.temp
+*.bak
+
+# ============================================================================
+# OS Files
+# ============================================================================
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# ============================================================================
+# Testing & Coverage
+# ============================================================================
+.pytest_cache/
+.coverage
+htmlcov/

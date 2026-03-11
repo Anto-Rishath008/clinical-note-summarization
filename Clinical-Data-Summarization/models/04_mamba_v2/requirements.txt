@@ -1,0 +1,33 @@
+# Mamba-Transformer Hybrid Model Requirements
+# For clinical note summarization
+
+# Core
+torch>=2.0.0
+numpy>=1.21.0
+pyyaml>=6.0
+
+# Mamba (State Space Model)
+mamba-ssm>=1.0.0
+causal-conv1d>=1.1.0
+
+# Tokenization
+sentencepiece>=0.1.99
+
+# Evaluation
+rouge-score>=0.1.2
+bert-score>=0.3.13
+
+# Web App
+gradio>=4.0.0
+
+# Speech-to-Text (install one of these for audio input)
+# openai-whisper           # Offline, recommended — pip install openai-whisper
+# SpeechRecognition        # Online (Google API) — pip install SpeechRecognition
+
+# Utilities
+tqdm>=4.64.0
+
+# Optional: Advanced Clinical Metrics (see CLINICAL_METRICS.md)
+# summac                   # Factual consistency — pip install summac
+# scispacy                 # Medical concept extraction — pip install scispacy
+# bart-score               # Source faithfulness — pip install bart-score

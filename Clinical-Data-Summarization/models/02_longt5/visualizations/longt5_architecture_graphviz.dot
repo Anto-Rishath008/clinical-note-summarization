@@ -1,0 +1,113 @@
+// Simplified LongT5 Architecture
+digraph {
+	dpi=150 rankdir=TB size="12,16"
+	node [fontname=Arial shape=box style="rounded,filled"]
+	subgraph cluster_input {
+		color="#4CAF50" fontcolor="#4CAF50" label=Input style=rounded
+		input_ids [label="Input IDs
+(batch, src_len)
+Clinical Note Tokens" fillcolor="#E8F5E9"]
+		decoder_input_ids [label="Decoder Input IDs
+(batch, tgt_len)
+Shifted Labels" fillcolor="#E8F5E9"]
+	}
+	subgraph cluster_embedding {
+		color="#2196F3" fontcolor="#2196F3" label="Shared Embedding Layer" style=rounded
+		shared_emb [label="nn.Embedding
+vocab=16000, d_model=256
+(Shared Encoder/Decoder)" fillcolor="#E3F2FD"]
+	}
+	subgraph cluster_encoder {
+		color="#FF9800" fontcolor="#FF9800" label="Encoder (×4 Layers)" style=rounded
+		subgraph cluster_enc_layer {
+			label="Encoder Layer" style=dashed
+			enc_ln1 [label=LayerNorm fillcolor="#F5F5F5"]
+			enc_local_global [label="Local-Global
+Self-Attention
+8 heads, d_head=32
+local_radius=127
+global_block=16" fillcolor="#FFEBEE"]
+			enc_dropout1 [label="Dropout(0.1)" fillcolor="#F5F5F5"]
+			enc_residual1 [label="⊕ Residual" fillcolor=white shape=circle]
+			enc_ln2 [label=LayerNorm fillcolor="#F5F5F5"]
+			enc_ffn [label="Feed-Forward
+256→1024→256
+GELU activation" fillcolor="#E0F7FA"]
+			enc_dropout2 [label="Dropout(0.1)" fillcolor="#F5F5F5"]
+			enc_residual2 [label="⊕ Residual" fillcolor=white shape=circle]
+		}
+		enc_final_ln [label="Final LayerNorm" fillcolor="#F5F5F5"]
+		encoder_output [label="Encoder Output
+(batch, src_len, 256)" fillcolor="#FFF3E0"]
+	}
+	subgraph cluster_decoder {
+		color="#9C27B0" fontcolor="#9C27B0" label="Decoder (×4 Layers)" style=rounded
+		subgraph cluster_dec_layer {
+			label="Decoder Layer" style=dashed
+			dec_ln1 [label=LayerNorm fillcolor="#F5F5F5"]
+			dec_self_attn [label="Causal
+Self-Attention
+8 heads
+(Masked)" fillcolor="#FFEBEE"]
+			dec_dropout1 [label="Dropout(0.1)" fillcolor="#F5F5F5"]
+			dec_residual1 [label="⊕ Residual" fillcolor=white shape=circle]
+			dec_ln2 [label=LayerNorm fillcolor="#F5F5F5"]
+			dec_cross_attn [label="Cross-Attention
+Q: Decoder
+K,V: Encoder" fillcolor="#FFEBEE"]
+			dec_dropout2 [label="Dropout(0.1)" fillcolor="#F5F5F5"]
+			dec_residual2 [label="⊕ Residual" fillcolor=white shape=circle]
+			dec_ln3 [label=LayerNorm fillcolor="#F5F5F5"]
+			dec_ffn [label="Feed-Forward
+256→1024→256
+GELU activation" fillcolor="#E0F7FA"]
+			dec_dropout3 [label="Dropout(0.1)" fillcolor="#F5F5F5"]
+			dec_residual3 [label="⊕ Residual" fillcolor=white shape=circle]
+		}
+		dec_final_ln [label="Final LayerNorm" fillcolor="#F5F5F5"]
+	}
+	subgraph cluster_output {
+		color="#FFC107" fontcolor="#FFC107" label=Output style=rounded
+		lm_head [label="LM Head
+Linear(256→16000)
+(Tied with Embedding)" fillcolor="#FFF9C4"]
+		logits [label="Logits
+(batch, tgt_len, 16000)" fillcolor="#FFF9C4"]
+		loss [label="CrossEntropyLoss
+label_smoothing=0.1" fillcolor="#FFF9C4"]
+	}
+	input_ids -> shared_emb [label=encode]
+	decoder_input_ids -> shared_emb [label=decode]
+	shared_emb -> enc_ln1 [label="encoder input"]
+	enc_ln1 -> enc_local_global
+	enc_local_global -> enc_dropout1
+	enc_dropout1 -> enc_residual1
+	enc_residual1 -> enc_ln2
+	enc_ln2 -> enc_ffn
+	enc_ffn -> enc_dropout2
+	enc_dropout2 -> enc_residual2
+	enc_residual2 -> enc_final_ln [label="×4"]
+	enc_final_ln -> encoder_output
+	enc_ln1 -> enc_residual1 [color=gray style=dashed]
+	enc_ln2 -> enc_residual2 [color=gray style=dashed]
+	shared_emb -> dec_ln1 [label="decoder input"]
+	dec_ln1 -> dec_self_attn
+	dec_self_attn -> dec_dropout1
+	dec_dropout1 -> dec_residual1
+	dec_residual1 -> dec_ln2
+	dec_ln2 -> dec_cross_attn
+	encoder_output -> dec_cross_attn [label="K, V" color="#FF9800" style=bold]
+	dec_cross_attn -> dec_dropout2
+	dec_dropout2 -> dec_residual2
+	dec_residual2 -> dec_ln3
+	dec_ln3 -> dec_ffn
+	dec_ffn -> dec_dropout3
+	dec_dropout3 -> dec_residual3
+	dec_residual3 -> dec_final_ln [label="×4"]
+	dec_ln1 -> dec_residual1 [color=gray style=dashed]
+	dec_ln2 -> dec_residual2 [color=gray style=dashed]
+	dec_ln3 -> dec_residual3 [color=gray style=dashed]
+	dec_final_ln -> lm_head
+	lm_head -> logits
+	logits -> loss
+}
